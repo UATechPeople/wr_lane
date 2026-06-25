@@ -1,3 +1,4 @@
+import { createHmac } from "crypto";
 import { Elysia, t } from "elysia";
 import { config } from "./config";
 import index from "../public/index.html";
@@ -62,26 +63,61 @@ const metaBody = {
   cohort: t.Optional(t.String()),
 };
 
-// HTTP Basic Auth for operator endpoints. Disabled when creds are unset (dev).
-function checkBasicAuth(header?: string): boolean {
-  const { user, pass } = config.auth;
-  if (!user || !pass) return true;
-  if (!header?.startsWith("Basic ")) return false;
-  const decoded = atob(header.slice(6));
-  const i = decoded.indexOf(":");
-  return decoded.slice(0, i) === user && decoded.slice(i + 1) === pass;
+// Session auth: a signed, expiring httpOnly cookie (no server-side session store).
+const SESSION_TTL_S = 7 * 24 * 3600;
+
+function sign(payload: string): string {
+  return createHmac("sha256", config.sessionSecret).update(payload).digest("base64url");
+}
+function makeToken(): string {
+  const payload = Buffer.from(`${config.auth.user}:${Date.now() + SESSION_TTL_S * 1000}`).toString("base64url");
+  return `${payload}.${sign(payload)}`;
+}
+function verifyToken(token?: string): boolean {
+  if (!token) return false;
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig || sign(payload) !== sig) return false;
+  const [user, exp] = Buffer.from(payload, "base64url").toString().split(":");
+  return user === config.auth.user && Number(exp) > Date.now();
+}
+function readCookie(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return undefined;
 }
 
 const api = new Elysia({ prefix: "/api" })
+  // Session guard. /login and /decrypt are exempt; auth is off when no creds are set.
   .onBeforeHandle(({ request, headers, set }) => {
-    // /api/decrypt is machine-to-machine (kamailio) — guarded by X-Decrypt-Key, not Basic Auth.
-    if (new URL(request.url).pathname.endsWith("/decrypt")) return;
-    if (!checkBasicAuth(headers.authorization)) {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/login") || path.endsWith("/decrypt")) return;
+    if (!config.auth.user || !config.auth.pass) return;
+    if (!verifyToken(readCookie(headers.cookie, "cabinet_session"))) {
       set.status = 401;
-      set.headers["WWW-Authenticate"] = 'Basic realm="Hidden Numbers Cabinet"';
       return { error: "unauthorized" };
     }
   })
+  .post(
+    "/login",
+    ({ body, set }) => {
+      const ok = !!config.auth.user && body.user === config.auth.user && body.pass === config.auth.pass;
+      if (!ok) {
+        set.status = 401;
+        return { ok: false, error: "Invalid credentials" };
+      }
+      set.headers["Set-Cookie"] = `cabinet_session=${makeToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_S}`;
+      return { ok: true };
+    },
+    { body: t.Object({ user: t.String(), pass: t.String() }) },
+  )
+  .post("/logout", ({ set }) => {
+    set.headers["Set-Cookie"] = "cabinet_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    return { ok: true };
+  })
+  .get("/me", () => ({ user: config.auth.user ?? "operator" }))
   // Create from a JSON list of phones (paste box).
   .post("/numbers", ({ body }) => ingest(body.numbers.map((p) => ({ phone: p }))), {
     body: t.Object({ numbers: t.Array(t.String()) }),

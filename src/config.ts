@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+
 function req(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`missing required env ${name} (run \`bun run keygen\`)`);
@@ -29,6 +31,14 @@ export const config = {
     user: process.env.CABINET_USER,
     pass: process.env.CABINET_PASSWORD,
   },
+
+  // Secret for signing session cookies. Stable across restarts; derived from existing
+  // secrets so no extra env is required (changing the password invalidates sessions).
+  sessionSecret:
+    process.env.SESSION_SECRET ||
+    createHash("sha256")
+      .update(`${process.env.CABINET_PASSWORD ?? ""}|${process.env.FF3_KEY ?? ""}|wr-hidden-numbers`)
+      .digest("hex"),
 
   dbPath: process.env.DB_PATH ?? "cabinet.sqlite",
 

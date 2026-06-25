@@ -51,6 +51,18 @@ async function postFile<T>(url: string, file: File, headerMap?: Record<string, s
 const json = (r: Response) => r.json();
 
 export const api = {
+  me: (): Promise<{ user: string }> =>
+    fetch("/api/me").then((r) => {
+      if (!r.ok) throw new Error("unauthenticated");
+      return r.json();
+    }),
+  login: (user: string, pass: string): Promise<{ ok: boolean; error?: string }> =>
+    fetch("/api/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ user, pass }),
+    }).then(async (r) => ({ ok: r.ok, ...(await r.json()) })),
+  logout: (): Promise<unknown> => fetch("/api/logout", { method: "POST" }).then(json),
   list: (page: number, size: number, q?: string): Promise<{ total: number; numbers: Row[] }> =>
     fetch(`/api/numbers?limit=${size}&offset=${page * size}${q ? `&q=${encodeURIComponent(q)}` : ""}`).then(json),
   preview: (file: File, headerMap?: Record<string, string>): Promise<Preview> =>
