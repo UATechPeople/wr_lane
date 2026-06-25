@@ -27,11 +27,11 @@ egress SIP leg, just before the call hits the PSTN provider.
 
 ## Auth
 
-The cabinet UI + data API are behind **HTTP Basic Auth** (`CABINET_USER` / `CABINET_PASSWORD`).
-The browser prompts for credentials on the first data request. Exempt: `/health` and
-`/api/decrypt` (machine-to-machine, guarded by `X-Decrypt-Key`). If the two env vars are unset,
-auth is disabled and a startup warning is logged — set them in any real deployment, and put the
-service behind TLS.
+The cabinet has a **login page** backed by a session cookie (`CABINET_USER` / `CABINET_PASSWORD`):
+
+- `POST /api/login` checks the creds and sets a signed, expiring **httpOnly** cookie (`cabinet_session`, 7d). No server-side session store — the cookie is HMAC-signed with `sessionSecret` (derived from your existing secrets, or set `SESSION_SECRET`). `POST /api/logout` clears it; `GET /api/me` reports the session.
+- All `/api/*` require a valid session. Exempt: `/api/login`, `/health`, and `/api/decrypt` (machine-to-machine, guarded by `X-Decrypt-Key`).
+- If `CABINET_USER`/`CABINET_PASSWORD` are unset, auth is disabled (dev) and a startup warning is logged. Set them in any real deployment, and put the service behind TLS.
 
 ## Token design (FF3-1, format-preserving)
 
