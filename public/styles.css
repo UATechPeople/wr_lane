@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/* WinRiders UI design tokens (mirror of apps/ui/tailwind.config.ts). */
+@theme {
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-900: #312e81;
+
+  --color-neutral-25: #f8f8f9;
+  --color-neutral-50: #f1f1f2;
+  --color-neutral-75: #eaebec;
+  --color-neutral-100: #e3e4e6;
+  --color-neutral-250: #bbbcbf;
+  --color-neutral-500: #7b7c80;
+  --color-neutral-700: #494a4d;
+  --color-neutral-800: #313133;
+  --color-neutral-850: #242526;
+  --color-neutral-900: #121313;
+  --color-neutral-950: #0c0c0d;
+}
+
+@keyframes toast {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
