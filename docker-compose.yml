@@ -1,0 +1,31 @@
+services:
+  cabinet:
+    build: .
+    ports:
+      - "3500:3500"
+    environment:
+      PORT: 3500
+      FF3_KEY: ${FF3_KEY:?set FF3_KEY in .env}
+      FF3_TWEAK: ${FF3_TWEAK:-D8E7920AFA330A73}
+      ROUTE_DIGIT: ${ROUTE_DIGIT:-9}
+      DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
+      DB_PATH: /data/cabinet.sqlite
+    volumes:
+      - cabinet-data:/data
+    restart: unless-stopped
+
+#  kamailio:
+#    image: kamailio/kamailio:5.8.3-noble
+#    depends_on:
+#      - cabinet
+#    environment:
+#      DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
+#    volumes:
+#      - ./kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
+#    ports:
+#      - "5060:5060/udp"
+#      - "5061:5061/tcp"
+#    restart: unless-stopped
+
+volumes:
+  cabinet-data:
