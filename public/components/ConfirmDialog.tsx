@@ -1,35 +1,27 @@
-import type { Row } from "../lib/api";
+import type { ConfirmState } from "../lib/useCabinet";
 import { Modal } from "./Modal";
 import { Button } from "./Button";
 
 export function ConfirmDialog({
-  row,
+  confirm,
   busy,
   onClose,
   onConfirm,
 }: {
-  row: Row | null;
+  confirm: ConfirmState | null;
   busy: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }) {
   return (
-    <Modal
-      open={!!row}
-      onClose={onClose}
-      title="Delete contact"
-      description={
-        row
-          ? `${row.real} and its token are removed from this cabinet. Any token already pushed stays in WinRiders.`
-          : undefined
-      }
+    <Modal open={!!confirm} onClose={onClose} title={confirm?.title ?? ""} description={confirm?.description}
       footer={
         <>
           <Button mode="function" onClick={onClose}>
-            Keep
+            Cancel
           </Button>
           <Button mode="remove" disabled={busy} onClick={onConfirm}>
-            {busy ? "Deleting…" : "Delete"}
+            {busy ? "Working…" : confirm?.confirmLabel ?? "Confirm"}
           </Button>
         </>
       }

@@ -1,14 +1,21 @@
 import { Database } from "bun:sqlite";
 import { config } from "./config";
 
-// The cabinet base. This is the ONLY place real numbers live — entirely client-side.
-// We store the full player record (external_id, name, country, language, segment,
-// cohort) so it can be pushed to WinRiders as-is; only `real` is secret, and only its
-// `token` ever leaves. Decryption does NOT read this table (FF3-1 reverses from the key).
+// The cabinet base. Real numbers live ONLY here (client-side). Numbers belong to an
+// `upload` (a batch). Decryption does NOT read this table (FF3-1 reverses from the key);
+// the base is kept for the operator UI, audit, CSV export, and push.
 const db = new Database(config.dbPath);
+db.run(`
+  CREATE TABLE IF NOT EXISTS uploads (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    label      TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
 db.run(`
   CREATE TABLE IF NOT EXISTS numbers (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    upload_id   INTEGER,
     real        TEXT NOT NULL UNIQUE,
     token       TEXT NOT NULL UNIQUE,
     external_id TEXT,
@@ -25,6 +32,7 @@ db.run(`
 
 export type NumberRow = {
   id: number;
+  upload_id: number | null;
   real: string;
   token: string;
   external_id: string | null;
@@ -50,20 +58,60 @@ export type NewNumber = {
   cohort?: string;
 };
 
+export type UploadRow = { id: number; label: string; created_at: string; count: number };
+
 const COLS =
-  "id, real, token, external_id, first_name, last_name, country, language, segment, cohort, created_at, pushed_at";
+  "id, upload_id, real, token, external_id, first_name, last_name, country, language, segment, cohort, created_at, pushed_at";
 
-const META_FIELDS = ["external_id", "first_name", "last_name", "country", "language", "segment", "cohort"] as const;
+// ── uploads ──────────────────────────────────────────────────────────────────
 
-export function insertNumbers(rows: NewNumber[]): void {
+export function createUpload(label: string): number {
+  return Number(db.prepare("INSERT INTO uploads (label) VALUES (?)").run(label).lastInsertRowid);
+}
+
+export function listUploads(): UploadRow[] {
+  return db
+    .query(
+      `SELECT u.id, u.label, u.created_at, COUNT(n.id) AS count
+       FROM uploads u LEFT JOIN numbers n ON n.upload_id = u.id
+       GROUP BY u.id ORDER BY u.id DESC`,
+    )
+    .all() as UploadRow[];
+}
+
+export function getUpload(id: number): UploadRow | null {
+  return (
+    (db
+      .query(
+        `SELECT u.id, u.label, u.created_at, COUNT(n.id) AS count
+         FROM uploads u LEFT JOIN numbers n ON n.upload_id = u.id
+         WHERE u.id = ? GROUP BY u.id`,
+      )
+      .get(id) as UploadRow) ?? null
+  );
+}
+
+export function deleteUpload(id: number): boolean {
+  db.prepare("DELETE FROM numbers WHERE upload_id = ?").run(id);
+  return db.prepare("DELETE FROM uploads WHERE id = ?").run(id).changes > 0;
+}
+
+export function rowsForUpload(id: number): NumberRow[] {
+  return db.query(`SELECT ${COLS} FROM numbers WHERE upload_id = ? ORDER BY id`).all(id) as NumberRow[];
+}
+
+// ── numbers ──────────────────────────────────────────────────────────────────
+
+export function insertNumbers(uploadId: number, rows: NewNumber[]): void {
   const stmt = db.prepare(
     `INSERT OR IGNORE INTO numbers
-       (real, token, external_id, first_name, last_name, country, language, segment, cohort)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (upload_id, real, token, external_id, first_name, last_name, country, language, segment, cohort)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const tx = db.transaction((items: NewNumber[]) => {
     for (const r of items) {
       stmt.run(
+        uploadId,
         r.real,
         r.token,
         r.external_id ?? null,
@@ -79,17 +127,31 @@ export function insertNumbers(rows: NewNumber[]): void {
   tx(rows);
 }
 
-function likeClause(q?: string): { sql: string; params: string[] } {
-  if (!q || !q.trim()) return { sql: "", params: [] };
-  const like = `%${q.trim()}%`;
-  return { sql: " WHERE real LIKE ? OR token LIKE ? OR external_id LIKE ? OR segment LIKE ?", params: [like, like, like, like] };
+function filterClause(q?: string, uploadId?: number): { sql: string; params: unknown[] } {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (uploadId != null && !Number.isNaN(uploadId)) {
+    conds.push("upload_id = ?");
+    params.push(uploadId);
+  }
+  if (q && q.trim()) {
+    const like = `%${q.trim()}%`;
+    conds.push("(real LIKE ? OR token LIKE ? OR external_id LIKE ? OR segment LIKE ?)");
+    params.push(like, like, like, like);
+  }
+  return { sql: conds.length ? ` WHERE ${conds.join(" AND ")}` : "", params };
 }
 
-export function listNumbers(limit = 50, offset = 0, q?: string): NumberRow[] {
-  const w = likeClause(q);
+export function listNumbers(limit = 50, offset = 0, q?: string, uploadId?: number): NumberRow[] {
+  const w = filterClause(q, uploadId);
   return db
     .query(`SELECT ${COLS} FROM numbers${w.sql} ORDER BY id DESC LIMIT ? OFFSET ?`)
-    .all(...w.params, limit, offset) as NumberRow[];
+    .all(...(w.params as any[]), limit, offset) as NumberRow[];
+}
+
+export function countNumbers(q?: string, uploadId?: number): number {
+  const w = filterClause(q, uploadId);
+  return (db.query(`SELECT COUNT(*) AS n FROM numbers${w.sql}`).get(...(w.params as any[])) as { n: number }).n;
 }
 
 export function getNumber(id: number): NumberRow | null {
@@ -100,7 +162,8 @@ export function allRecords(): NumberRow[] {
   return db.query(`SELECT ${COLS} FROM numbers ORDER BY id`).all() as NumberRow[];
 }
 
-// Patch any provided columns. If `real`/`token` change, push state is reset.
+const META_FIELDS = ["external_id", "first_name", "last_name", "country", "language", "segment", "cohort"] as const;
+
 export function updateNumber(id: number, patch: Partial<NewNumber>): boolean {
   const sets: string[] = [];
   const vals: unknown[] = [];
@@ -121,17 +184,11 @@ export function updateNumber(id: number, patch: Partial<NewNumber>): boolean {
   if (sets.length === 0) return false;
   sets.push("pushed_at = NULL");
   vals.push(id);
-  const res = db.prepare(`UPDATE numbers SET ${sets.join(", ")} WHERE id = ?`).run(...(vals as any[]));
-  return res.changes > 0;
+  return db.prepare(`UPDATE numbers SET ${sets.join(", ")} WHERE id = ?`).run(...(vals as any[])).changes > 0;
 }
 
 export function deleteNumber(id: number): boolean {
   return db.prepare("DELETE FROM numbers WHERE id = ?").run(id).changes > 0;
-}
-
-export function allTokens(): string[] {
-  const rows = db.query("SELECT token FROM numbers ORDER BY id").all() as { token: string }[];
-  return rows.map((r) => r.token);
 }
 
 export function markPushed(tokens: string[]): void {
@@ -140,11 +197,6 @@ export function markPushed(tokens: string[]): void {
     for (const t of items) stmt.run(t);
   });
   tx(tokens);
-}
-
-export function countNumbers(q?: string): number {
-  const w = likeClause(q);
-  return (db.query(`SELECT COUNT(*) AS n FROM numbers${w.sql}`).get(...w.params) as { n: number }).n;
 }
 
 export { db };

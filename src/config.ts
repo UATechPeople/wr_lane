@@ -52,4 +52,12 @@ export const config = {
     cohort: process.env.WR_COHORT,
     eventType: process.env.WR_EVENT_TYPE ?? "player.registered",
   },
+
+  // Detokenize runs on a SEPARATE internal listener (token -> real number), reached only
+  // by the SIP proxy over the internal network — never the public UI port. Bind to
+  // 127.0.0.1 locally; in Docker set INTERNAL_HOST=0.0.0.0 but DON'T publish the port.
+  internal: {
+    host: process.env.INTERNAL_HOST ?? "127.0.0.1",
+    port: Number(process.env.INTERNAL_PORT ?? 3501),
+  },
 };

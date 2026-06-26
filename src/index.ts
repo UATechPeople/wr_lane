@@ -4,17 +4,22 @@ import { config } from "./config";
 import index from "../public/index.html";
 import { encryptPhone, decryptToken } from "./fpe";
 import {
+  createUpload,
+  listUploads,
+  getUpload,
+  deleteUpload,
+  rowsForUpload,
   insertNumbers,
   listNumbers,
   getNumber,
   updateNumber,
   deleteNumber,
-  allTokens,
   allRecords,
   countNumbers,
   markPushed,
   type NewNumber,
 } from "./db";
+import { toCoreCsv } from "./csv";
 import { pushRecords } from "./winriders";
 import { parseRecords, previewFile, type UploadRecord, type HeaderMap } from "./upload";
 
@@ -28,7 +33,7 @@ type IngestRow = { real: string; token: string | null; ok: boolean; error?: stri
 
 // Tokenize the phone of each record and store the full player row. Shared by the
 // JSON, file-upload, and (single) create paths.
-function ingest(records: UploadRecord[]): { accepted: number; total: number; rows: IngestRow[] } {
+function ingest(records: UploadRecord[], label: string): { uploadId: number; accepted: number; total: number; rows: IngestRow[] } {
   const ok: NewNumber[] = [];
   const rows: IngestRow[] = records.map((rec) => {
     try {
@@ -49,8 +54,9 @@ function ingest(records: UploadRecord[]): { accepted: number; total: number; row
       return { real: rec.phone, token: null, ok: false, error: String((e as Error).message) };
     }
   });
-  insertNumbers(ok);
-  return { accepted: ok.length, total: rows.length, rows };
+  const uploadId = createUpload(label);
+  insertNumbers(uploadId, ok);
+  return { uploadId, accepted: ok.length, total: rows.length, rows };
 }
 
 const metaBody = {
@@ -93,7 +99,7 @@ const api = new Elysia({ prefix: "/api" })
   // Session guard. /login and /decrypt are exempt; auth is off when no creds are set.
   .onBeforeHandle(({ request, headers, set }) => {
     const path = new URL(request.url).pathname;
-    if (path.endsWith("/login") || path.endsWith("/decrypt")) return;
+    if (path.endsWith("/login")) return;
     if (!config.auth.user || !config.auth.pass) return;
     if (!verifyToken(readCookie(headers.cookie, "cabinet_session"))) {
       set.status = 401;
@@ -119,8 +125,8 @@ const api = new Elysia({ prefix: "/api" })
   })
   .get("/me", () => ({ user: config.auth.user ?? "operator" }))
   // Create from a JSON list of phones (paste box).
-  .post("/numbers", ({ body }) => ingest(body.numbers.map((p) => ({ phone: p }))), {
-    body: t.Object({ numbers: t.Array(t.String()) }),
+  .post("/numbers", ({ body }) => ingest(body.numbers.map((p) => ({ phone: p })), body.label?.trim() || "Pasted list"), {
+    body: t.Object({ numbers: t.Array(t.String()), label: t.Optional(t.String()) }),
   })
 
   // Create from an uploaded CSV / XLSX file (multipart field `file`). Captures all
@@ -134,7 +140,7 @@ const api = new Elysia({ prefix: "/api" })
           set.status = 422;
           return { error: "no phone column found / file empty" };
         }
-        return { filename: body.file.name, ...ingest(records) };
+        return { filename: body.file.name, ...ingest(records, body.file.name || "Upload") };
       } catch (e) {
         set.status = 400;
         return { error: `could not parse file: ${String((e as Error).message)}` };
@@ -165,9 +171,17 @@ const api = new Elysia({ prefix: "/api" })
       const limit = Math.min(Math.max(Number(query.limit ?? 50), 1), 500);
       const offset = Math.max(Number(query.offset ?? 0), 0);
       const q = query.q;
-      return { total: countNumbers(q), limit, offset, numbers: listNumbers(limit, offset, q) };
+      const uploadId = query.upload_id ? Number(query.upload_id) : undefined;
+      return { total: countNumbers(q, uploadId), limit, offset, numbers: listNumbers(limit, offset, q, uploadId) };
     },
-    { query: t.Object({ limit: t.Optional(t.String()), offset: t.Optional(t.String()), q: t.Optional(t.String()) }) },
+    {
+      query: t.Object({
+        limit: t.Optional(t.String()),
+        offset: t.Optional(t.String()),
+        q: t.Optional(t.String()),
+        upload_id: t.Optional(t.String()),
+      }),
+    },
   )
 
   .get("/numbers/:id", ({ params, set }) => {
@@ -216,8 +230,40 @@ const api = new Elysia({ prefix: "/api" })
     return { deleted: true };
   })
 
-  // Tokens to ship to WinRiders (drop into `phone_e164`).
-  .get("/export", () => ({ tokens: allTokens() }))
+  // Uploads (batches): list, detail, per-upload CSV export, delete.
+  .get("/uploads", () => ({ uploads: listUploads() }))
+  .get("/uploads/:id", ({ params, set }) => {
+    const upload = getUpload(Number(params.id));
+    if (!upload) {
+      set.status = 404;
+      return { error: "not found" };
+    }
+    return { upload, numbers: rowsForUpload(Number(params.id)) };
+  })
+  .get("/uploads/:id/export.csv", ({ params, set }) => {
+    const upload = getUpload(Number(params.id));
+    if (!upload) {
+      set.status = 404;
+      return { error: "not found" };
+    }
+    set.headers["content-type"] = "text/csv; charset=utf-8";
+    set.headers["content-disposition"] = `attachment; filename="upload-${upload.id}-tokens.csv"`;
+    return toCoreCsv(rowsForUpload(upload.id));
+  })
+  .delete("/uploads/:id", ({ params, set }) => {
+    if (!deleteUpload(Number(params.id))) {
+      set.status = 404;
+      return { error: "not found" };
+    }
+    return { deleted: true };
+  })
+
+  // Whole base as a core-shape CSV (tokens in phone_e164).
+  .get("/export.csv", ({ set }) => {
+    set.headers["content-type"] = "text/csv; charset=utf-8";
+    set.headers["content-disposition"] = `attachment; filename="tokens.csv"`;
+    return toCoreCsv(allRecords());
+  })
 
   // Push the whole base to WinRiders as player events. Idempotent (WR dedupes on event_id).
   .post("/push", async ({ set }) => {
@@ -236,25 +282,7 @@ const api = new Elysia({ prefix: "/api" })
       set.status = 400;
       return { error: String((e as Error).message) };
     }
-  })
-
-  // Called on the egress SIP leg: token -> real number. Stateless (FF3).
-  .get(
-    "/decrypt",
-    ({ query, headers, set }) => {
-      if (headers["x-decrypt-key"] !== config.decryptKey) {
-        set.status = 401;
-        return { error: "unauthorized" };
-      }
-      try {
-        return { phone: decryptToken(query.t) };
-      } catch (e) {
-        set.status = 422;
-        return { error: "bad token", detail: String((e as Error).message) };
-      }
-    },
-    { query: t.Object({ t: t.String() }) },
-  );
+  });
 
 const app = new Elysia().get("/health", () => ({ ok: true, count: countNumbers() })).use(api);
 
@@ -270,7 +298,29 @@ Bun.serve({
 
 console.log(`[hidden-numbers] cabinet listening on :${config.port}`);
 if (!config.auth.user || !config.auth.pass) {
-  console.warn("[hidden-numbers] ⚠ Basic Auth DISABLED — set CABINET_USER and CABINET_PASSWORD to protect the cabinet.");
+  console.warn("[hidden-numbers] ⚠ Auth DISABLED — set CABINET_USER and CABINET_PASSWORD to protect the cabinet.");
 }
+
+// Internal-only detokenize listener (token -> real number). Reached by the SIP proxy
+// over the internal network, guarded by X-Decrypt-Key. Never exposed on the public port.
+Bun.serve({
+  hostname: config.internal.host,
+  port: config.internal.port,
+  fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname !== "/detokenize") return new Response("not found", { status: 404 });
+    if (req.headers.get("x-decrypt-key") !== config.decryptKey) {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    const token = url.searchParams.get("t");
+    if (!token) return Response.json({ error: "missing t" }, { status: 400 });
+    try {
+      return Response.json({ phone: decryptToken(token) });
+    } catch {
+      return Response.json({ error: "bad token" }, { status: 422 });
+    }
+  },
+});
+console.log(`[hidden-numbers] detokenize (internal) on ${config.internal.host}:${config.internal.port}`);
 
 export type App = typeof app;

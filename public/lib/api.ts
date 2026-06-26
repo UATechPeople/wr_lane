@@ -8,6 +8,8 @@ export type Row = {
   pushed_at: string | null;
 };
 
+export type Upload = { id: number; label: string; created_at: string; count: number };
+
 export type Preview = {
   headers: string[];
   mapping: Record<string, string>;
@@ -63,8 +65,14 @@ export const api = {
       body: JSON.stringify({ user, pass }),
     }).then(async (r) => ({ ok: r.ok, ...(await r.json()) })),
   logout: (): Promise<unknown> => fetch("/api/logout", { method: "POST" }).then(json),
-  list: (page: number, size: number, q?: string): Promise<{ total: number; numbers: Row[] }> =>
-    fetch(`/api/numbers?limit=${size}&offset=${page * size}${q ? `&q=${encodeURIComponent(q)}` : ""}`).then(json),
+  list: (page: number, size: number, q?: string, uploadId?: number | null): Promise<{ total: number; numbers: Row[] }> =>
+    fetch(
+      `/api/numbers?limit=${size}&offset=${page * size}` +
+        (q ? `&q=${encodeURIComponent(q)}` : "") +
+        (uploadId != null ? `&upload_id=${uploadId}` : ""),
+    ).then(json),
+  uploads: (): Promise<{ uploads: Upload[] }> => fetch("/api/uploads").then(json),
+  deleteUpload: (id: number): Promise<unknown> => fetch(`/api/uploads/${id}`, { method: "DELETE" }).then(json),
   preview: (file: File, headerMap?: Record<string, string>): Promise<Preview> =>
     postFile("/api/numbers/preview", file, headerMap),
   upload: (file: File, headerMap?: Record<string, string>): Promise<UploadResult & { error?: string }> =>
