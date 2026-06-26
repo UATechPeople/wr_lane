@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, invertMap, type Preview, type Row } from "./api";
+import { api, invertMap, type Preview, type Row, type Upload } from "./api";
 import type { ToastData, ToastTone } from "../components/Toast";
 
 const PAGE_SIZE = 25;
 
+export type ConfirmState = { title: string; description: string; confirmLabel: string; run: () => Promise<void> };
+
 export function useCabinet() {
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
+  const [uploads, setUploads] = useState<Upload[]>([]);
+  const [selectedUpload, setSelectedUpload] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
@@ -18,16 +22,18 @@ export function useCabinet() {
   const [map, setMap] = useState<Record<string, string>>({});
 
   const [editing, setEditing] = useState<Row | null>(null);
-  const [deleting, setDeleting] = useState<Row | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const grandTotal = uploads.reduce((a, u) => a + u.count, 0);
   const notify = (text: string, tone: ToastTone = "success") => setToast({ text, tone });
 
   const refresh = useCallback(async () => {
-    const r = await api.list(page, PAGE_SIZE, search);
-    setTotal(r.total);
-    setRows(r.numbers);
-  }, [page, search]);
+    const [n, u] = await Promise.all([api.list(page, PAGE_SIZE, search, selectedUpload), api.uploads()]);
+    setTotal(n.total);
+    setRows(n.numbers);
+    setUploads(u.uploads);
+  }, [page, search, selectedUpload]);
 
   useEffect(() => {
     refresh();
@@ -37,13 +43,16 @@ export function useCabinet() {
     setSearch(v);
     setPage(0);
   }
+  function selectUpload(id: number | null) {
+    setSelectedUpload(id);
+    setPage(0);
+  }
 
   function resetFile() {
     setFile(null);
     setPreview(null);
     setMap({});
   }
-
   function closeAdd() {
     setAdding(false);
     resetFile();
@@ -78,6 +87,7 @@ export function useCabinet() {
         notify(`Imported ${res.accepted} of ${res.total}` + (bad ? ` · ${bad} rejected` : ""), bad ? "info" : "success");
       }
       closeAdd();
+      setSelectedUpload(null);
       setPage(0);
       await refresh();
     } finally {
@@ -93,6 +103,7 @@ export function useCabinet() {
       const res = await api.paste(numbers);
       notify(`Imported ${res.accepted} of ${res.total}`);
       closeAdd();
+      setSelectedUpload(null);
       setPage(0);
       await refresh();
     } finally {
@@ -132,28 +143,52 @@ export function useCabinet() {
     }
   }
 
-  async function confirmDelete() {
-    if (!deleting) return;
+  async function runConfirm() {
+    if (!confirm) return;
     setBusy(true);
     try {
-      await api.remove(deleting.id);
-      notify("Contact deleted");
-      setDeleting(null);
+      await confirm.run();
+      setConfirm(null);
       await refresh();
     } finally {
       setBusy(false);
     }
   }
 
+  function askDeleteContact(row: Row) {
+    setConfirm({
+      title: "Delete contact",
+      description: `${row.real} and its token are removed from this cabinet. Tokens already pushed stay in Platform.`,
+      confirmLabel: "Delete",
+      run: async () => {
+        await api.remove(row.id);
+        notify("Contact deleted");
+      },
+    });
+  }
+
+  function askDeleteUpload(u: Upload) {
+    setConfirm({
+      title: "Delete upload",
+      description: `“${u.label}” and its ${u.count} number(s) are removed from this cabinet.`,
+      confirmLabel: "Delete upload",
+      run: async () => {
+        await api.deleteUpload(u.id);
+        if (selectedUpload === u.id) setSelectedUpload(null);
+        notify("Upload deleted");
+      },
+    });
+  }
+
   return {
-    rows, total, page, pages, pageSize: PAGE_SIZE, search, busy, toast,
-    adding, file, preview, map,
-    editing, deleting,
-    setPage, changeSearch,
+    rows, total, grandTotal, pages, pageSize: PAGE_SIZE, page, search, busy, toast,
+    uploads, selectedUpload,
+    adding, file, preview, map, editing, confirm,
+    setPage, changeSearch, selectUpload,
     openAdd: () => setAdding(true), closeAdd, pickFile, remap, importFile, pasteNumbers, cancelFile: resetFile,
     push,
     openEdit: setEditing, closeEdit: () => setEditing(null), saveEdit,
-    openDelete: setDeleting, closeDelete: () => setDeleting(null), confirmDelete,
+    askDeleteContact, askDeleteUpload, closeConfirm: () => setConfirm(null), runConfirm,
     dismissToast: () => setToast(null),
   };
 }
