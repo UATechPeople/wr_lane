@@ -9,6 +9,10 @@ services:
       FF3_TWEAK: ${FF3_TWEAK:-D8E7920AFA330A73}
       ROUTE_DIGIT: ${ROUTE_DIGIT:-9}
       DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
+      CABINET_USER: ${CABINET_USER:-admin}
+      CABINET_PASSWORD: ${CABINET_PASSWORD:?set CABINET_PASSWORD in .env}
+      INTERNAL_HOST: 0.0.0.0
+      INTERNAL_PORT: 3501
       DB_PATH: /data/cabinet.sqlite
     volumes:
       - cabinet-data:/data

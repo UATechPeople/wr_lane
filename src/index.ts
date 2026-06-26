@@ -1,7 +1,7 @@
 import { createHmac } from "crypto";
 import { Elysia, t } from "elysia";
+import { staticPlugin } from "@elysiajs/static";
 import { config } from "./config";
-import index from "../public/index.html";
 import { encryptPhone, decryptToken } from "./fpe";
 import {
   createUpload,
@@ -284,17 +284,14 @@ const api = new Elysia({ prefix: "/api" })
     }
   });
 
-const app = new Elysia().get("/health", () => ({ ok: true, count: countNumbers() })).use(api);
-
-// React lives inside this app: the HTML import makes Bun bundle public/index.tsx (and
-// App.tsx, React, …) — no Vite, no separate build. Bun.serve routes "/" to the bundled
-// SPA and falls through to Elysia for the API. `development` adds HMR.
-Bun.serve({
-  port: config.port,
-  development: process.env.NODE_ENV !== "production",
-  routes: { "/": index },
-  fetch: app.fetch,
-});
+// Serve the pre-built React UI (run `bun run build:web` → dist/) as static files.
+// Pre-building runs the Tailwind plugin so utility classes are generated (the dev
+// fullstack server does this at runtime, but production bundling does not).
+const app = new Elysia()
+  .get("/health", () => ({ ok: true, count: countNumbers() }))
+  .use(api)
+  .use(staticPlugin({ assets: "dist", prefix: "/", indexHTML: true }))
+  .listen(config.port);
 
 console.log(`[hidden-numbers] cabinet listening on :${config.port}`);
 if (!config.auth.user || !config.auth.pass) {
