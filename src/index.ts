@@ -288,7 +288,7 @@ const api = new Elysia({ prefix: "/api" })
 // Pre-building runs the Tailwind plugin so utility classes are generated (the dev
 // fullstack server does this at runtime, but production bundling does not).
 const app = new Elysia()
-  .get("/health", () => ({ ok: true, count: countNumbers() }))
+  .get("/health", () => ({ ok: true, count: countNumbers(), clientPrefix: config.clientPrefix ?? null }))
   .use(api)
   .use(staticPlugin({ assets: "dist", prefix: "/", indexHTML: true }))
   .listen(config.port);
@@ -309,10 +309,17 @@ Bun.serve({
     if (req.headers.get("x-decrypt-key") !== config.decryptKey) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
-    const token = url.searchParams.get("t");
-    if (!token) return Response.json({ error: "missing t" }, { status: 400 });
+    const raw = url.searchParams.get("t");
+    if (!raw) return Response.json({ error: "missing t" }, { status: 400 });
+    // Kamailio may forward the whole dialed number (<clientPrefix><token>) or a bare
+    // token. Strip our client prefix if present, then decrypt.
+    let digits = raw.replace(/\D/g, "");
+    const pfx = config.clientPrefix;
+    if (pfx && digits.length === pfx.length + 15 && digits.startsWith(pfx)) {
+      digits = digits.slice(pfx.length);
+    }
     try {
-      return Response.json({ phone: decryptToken(token) });
+      return Response.json({ phone: decryptToken(digits) });
     } catch {
       return Response.json({ error: "bad token" }, { status: 422 });
     }

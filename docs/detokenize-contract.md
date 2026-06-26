@@ -22,7 +22,7 @@ Header: X-Decrypt-Key: <DECRYPT_KEY>
 
 | Param | Where | Value |
 | --- | --- | --- |
-| `t` | query | the **token** (the dialed user-part with the client prefix already stripped — see below) |
+| `t` | query | the dialed user-part — **either `<clientPrefix><token>` or a bare token**. The cabinet strips its `CLIENT_PREFIX` if present, so Kamailio may forward the whole dialed number as-is. |
 | `X-Decrypt-Key` | header | shared secret (env `DECRYPT_KEY`) |
 
 The token is tolerant of formatting: non-digits are stripped, so `+9XXXXXXXXXXXXXX`,
@@ -84,4 +84,10 @@ ElevenLabs will retransmit the INVITE.
 DECRYPT_KEY=<shared secret with the proxy>
 INTERNAL_HOST=0.0.0.0     # in Docker; 127.0.0.1 for local
 INTERNAL_PORT=3501
+CLIENT_PREFIX=123000      # this client's prefix; /detokenize strips it, /health reports it
 ```
+
+Each client runs their own cabinet, so `CLIENT_PREFIX` is that client's single source of truth
+(visible at `GET /health`). It must match Kamailio's routing prefix and wr-core's per-client
+`VoiceService.techPrefix`. If you'd rather strip the prefix in Kamailio, leave `CLIENT_PREFIX`
+unset and pass the bare token — both work.

@@ -46,10 +46,14 @@ JSON carries that client's routing prefix:
 - Assign that VoiceService to the client's campaign(s). The campaign dials the cabinet tokens; the prefix is added automatically.
 - Keep the **prefix table in sync with Kamailio** (the SIP dev routes on the same prefixes):
 
-  | Client | Prefix | VoiceService | Kamailio route |
-  | --- | --- | --- | --- |
-  | client1 | `123000` | VS-client1 | → client1 trunk |
-  | client2 | `223000` | VS-client2 | → client2 trunk |
+  | Client | Prefix | Cabinet `CLIENT_PREFIX` | wr-core VoiceService | Kamailio route |
+  | --- | --- | --- | --- | --- |
+  | client1 | `123000` | `CLIENT_PREFIX=123000` | VS-client1 `.techPrefix=123000` | → client1 trunk |
+  | client2 | `223000` | `CLIENT_PREFIX=223000` | VS-client2 `.techPrefix=223000` | → client2 trunk |
+
+  One prefix per client, declared in **three places that must match**: the client's cabinet
+  `CLIENT_PREFIX` env (its source of truth, visible at `GET /health`), the client's
+  `VoiceService.techPrefix` in wr-core (prepended at dial), and the Kamailio routing table.
 
 ## Campaign settings for a hidden-numbers client
 
