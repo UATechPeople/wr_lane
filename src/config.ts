@@ -60,4 +60,10 @@ export const config = {
     host: process.env.INTERNAL_HOST ?? "127.0.0.1",
     port: Number(process.env.INTERNAL_PORT ?? 3501),
   },
+
+  // This client's routing prefix (per Mark: one prefix per client, set in env — e.g.
+  // 123000). Each client runs their own cabinet, so this env is that client's source of
+  // truth. Kamailio routes on it; /detokenize strips it before decrypting. The TOKEN
+  // itself stays prefix-less — the prefix is applied at dial via Platform techPrefix.
+  clientPrefix: process.env.CLIENT_PREFIX,
 };

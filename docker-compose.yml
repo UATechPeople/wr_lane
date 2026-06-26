@@ -13,6 +13,11 @@ services:
       CABINET_PASSWORD: ${CABINET_PASSWORD:?set CABINET_PASSWORD in .env}
       INTERNAL_HOST: 0.0.0.0
       INTERNAL_PORT: 3501
+      CLIENT_PREFIX: ${CLIENT_PREFIX:-}
+      WR_BASE_URL: ${WR_BASE_URL:-}
+      WR_SLUG: ${WR_SLUG:-}
+      WR_API_KEY: ${WR_API_KEY:-}
+      WR_PLAYER_SEGMENT: ${WR_PLAYER_SEGMENT:-hidden_base}
       DB_PATH: /data/cabinet.sqlite
     volumes:
       - cabinet-data:/data
