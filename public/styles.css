@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Explicitly scan our sources for class names. Production bundling (NODE_ENV=production)
+   doesn't auto-detect content the way the dev server does, so pin it. */
+@source "./**/*.{tsx,ts,html}";
+
 /* WinRiders UI design tokens (mirror of apps/ui/tailwind.config.ts). */
 @theme {
   --color-brand-50: #eef2ff;

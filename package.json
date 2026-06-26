@@ -1,18 +1,19 @@
 {
   "name": "wr-hidden-numbers",
   "version": "0.1.0",
-  "description": "Client-side cabinet: hold the real number base, ship only FF3-1 tokens to WinRiders, decrypt on egress. Single Elysia app — React served inside it via Bun's fullstack dev server (no Vite).",
+  "description": "Client-side cabinet: hold the real number base, ship only FF3-1 tokens to WinRiders, decrypt on egress. Elysia (Bun) API + React UI (pre-built with Bun.build + Tailwind, served from dist/).",
   "module": "src/index.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts",
-    "build": "bun build --compile --target bun --outfile dist/cabinet src/index.ts",
+    "build:web": "bun scripts/build-web.ts",
+    "dev": "bun run build:web && bun --watch src/index.ts",
+    "start": "bun run build:web && bun src/index.ts",
     "keygen": "bun -e \"const c=require('crypto');console.log('FF3_KEY='+c.randomBytes(16).toString('hex').toUpperCase());console.log('FF3_TWEAK='+c.randomBytes(8).toString('hex').toUpperCase());console.log('DECRYPT_KEY='+c.randomBytes(24).toString('hex'))\"",
     "test": "bun test"
   },
   "dependencies": {
+    "@elysiajs/static": "^1.1.1",
     "@headlessui/react": "^2.2.10",
     "@heroicons/react": "^2.2.0",
     "clsx": "^2.1.1",
