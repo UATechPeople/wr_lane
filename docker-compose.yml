@@ -23,18 +23,19 @@ services:
       - cabinet-data:/data
     restart: unless-stopped
 
-#  kamailio:
-#    image: kamailio/kamailio:5.8.3-noble
-#    depends_on:
-#      - cabinet
-#    environment:
-#      DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
-#    volumes:
-#      - ./kamailio/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
-#    ports:
-#      - "5060:5060/udp"
-#      - "5061:5061/tcp"
-#    restart: unless-stopped
+kamailio:
+  build:
+    context: ./sip_proxy
+    dockerfile: docker/Dockerfile
+  container_name: kamailio
+  ports:
+    - "5060:5060/udp"
+    - "5060:5060/tcp"
+  environment:
+    DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
+  env_file:
+    - ./sip_proxy/.env
+  restart: unless-stopped
 
 volumes:
   cabinet-data:
