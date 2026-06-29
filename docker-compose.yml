@@ -23,19 +23,34 @@ services:
       - cabinet-data:/data
     restart: unless-stopped
 
-kamailio:
-  build:
-    context: ./sip_proxy
-    dockerfile: docker/Dockerfile
-  container_name: kamailio
-  ports:
-    - "5060:5060/udp"
-    - "5060:5060/tcp"
-  environment:
-    DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
-  env_file:
-    - ./sip_proxy/.env
-  restart: unless-stopped
+  kamailio:
+      build:
+        context: ./sip_proxy
+        dockerfile: docker/Dockerfile
+      ports:
+        - "5060:5060/udp"
+        - "5060:5060/tcp"
+      environment:
+        MY_PUBLIC_IP: ${MY_PUBLIC_IP:?set MY_PUBLIC_IP in .env}
+        DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
+        WEBHOOK_KEY: ${WEBHOOK_KEY:?set WEBHOOK_KEY in .env}
+        DB_URL: ${DB_URL:-sqlite:///var/lib/kamailio/kamailio.db}
+        DETOKEN_URL: ${DETOKEN_URL:-http://cabinet:3501/detokenize}
+        VOICEAI_CARRIER_C_TOKEN: ${VOICEAI_CARRIER_C_TOKEN:?set VOICEAI_CARRIER_C_TOKEN in .env}
+        VOICEAI_CARRIER_A_TOKEN: ${VOICEAI_CARRIER_A_TOKEN:?set VOICEAI_CARRIER_A_TOKEN in .env}
+        VOICEAI_CARRIER_B_TOKEN: ${VOICEAI_CARRIER_B_TOKEN:?set VOICEAI_CARRIER_B_TOKEN in .env}
+        CARRIER_C_GW_IP: ${CARRIER_C_GW_IP:?set CARRIER_C_GW_IP in .env}
+        CARRIER_C_GW_PORT: ${CARRIER_C_GW_PORT:-5060}
+        CARRIER_C_TECH_PREFIX: ${CARRIER_C_TECH_PREFIX:?set CARRIER_C_TECH_PREFIX in .env}
+        CARRIER_A_GW_IP: ${CARRIER_A_GW_IP:?set CARRIER_A_GW_IP in .env}
+        CARRIER_A_GW_PORT: ${CARRIER_A_GW_PORT:-5060}
+        CARRIER_A_AUTH_USER: ${CARRIER_A_AUTH_USER:?set CARRIER_A_AUTH_USER in .env}
+        CARRIER_A_AUTH_PASS: ${CARRIER_A_AUTH_PASS:?set CARRIER_A_AUTH_PASS in .env}
+        CARRIER_B_GW_IP: ${CARRIER_B_GW_IP:?set CARRIER_B_GW_IP in .env}
+        CARRIER_B_GW_PORT: ${CARRIER_B_GW_PORT:-5060}
+      depends_on:
+        - cabinet
+      restart: unless-stopped
 
 volumes:
   cabinet-data:
