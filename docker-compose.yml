@@ -23,19 +23,34 @@ services:
       - cabinet-data:/data
     restart: unless-stopped
 
-kamailio:
-  build:
-    context: ./sip_proxy
-    dockerfile: docker/Dockerfile
-  container_name: kamailio
-  ports:
-    - "5060:5060/udp"
-    - "5060:5060/tcp"
-  environment:
-    DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
-  env_file:
-    - ./sip_proxy/.env
-  restart: unless-stopped
+  kamailio:
+      build:
+        context: ./sip_proxy
+        dockerfile: docker/Dockerfile
+      ports:
+        - "5060:5060/udp"
+        - "5060:5060/tcp"
+      environment:
+        MY_PUBLIC_IP: ${MY_PUBLIC_IP:?set MY_PUBLIC_IP in .env}
+        DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
+        WEBHOOK_KEY: ${WEBHOOK_KEY:?set WEBHOOK_KEY in .env}
+        DB_URL: ${DB_URL:-sqlite:///var/lib/kamailio/kamailio.db}
+        DETOKEN_URL: ${DETOKEN_URL:-http://cabinet:3501/detokenize}
+        ELEVEN_LAB_PROTON_TOKEN: ${ELEVEN_LAB_PROTON_TOKEN:?set ELEVEN_LAB_PROTON_TOKEN in .env}
+        ELEVEN_LAB_MMD_TOKEN: ${ELEVEN_LAB_MMD_TOKEN:?set ELEVEN_LAB_MMD_TOKEN in .env}
+        ELEVEN_LAB_DIDGLOBAL_TOKEN: ${ELEVEN_LAB_DIDGLOBAL_TOKEN:?set ELEVEN_LAB_DIDGLOBAL_TOKEN in .env}
+        PROTON_GW_IP: ${PROTON_GW_IP:?set PROTON_GW_IP in .env}
+        PROTON_GW_PORT: ${PROTON_GW_PORT:-5060}
+        PROTON_TECH_PREFIX: ${PROTON_TECH_PREFIX:?set PROTON_TECH_PREFIX in .env}
+        MMD_GW_IP: ${MMD_GW_IP:?set MMD_GW_IP in .env}
+        MMD_GW_PORT: ${MMD_GW_PORT:-5060}
+        MMD_AUTH_USER: ${MMD_AUTH_USER:?set MMD_AUTH_USER in .env}
+        MMD_AUTH_PASS: ${MMD_AUTH_PASS:?set MMD_AUTH_PASS in .env}
+        DIDGLOBAL_GW_IP: ${DIDGLOBAL_GW_IP:?set DIDGLOBAL_GW_IP in .env}
+        DIDGLOBAL_GW_PORT: ${DIDGLOBAL_GW_PORT:-5060}
+      depends_on:
+        - cabinet
+      restart: unless-stopped
 
 volumes:
   cabinet-data:
