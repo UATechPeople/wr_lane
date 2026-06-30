@@ -100,6 +100,7 @@ const api = new Elysia({ prefix: "/api" })
   .onBeforeHandle(({ request, headers, set }) => {
     const path = new URL(request.url).pathname;
     if (path.endsWith("/login")) return;
+    if (path.endsWith("/health") || path.endsWith("/up")) return;
     if (!config.auth.user || !config.auth.pass) return;
     if (!verifyToken(readCookie(headers.cookie, "cabinet_session"))) {
       set.status = 401;
