@@ -1,7 +1,7 @@
 FROM debian:bullseye-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg ca-certificates \
+    curl gnupg ca-certificates netbase \
     && curl -fsSL https://deb.kamailio.org/kamailiodebkey.gpg \
        | gpg --dearmor -o /usr/share/keyrings/kamailio.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/kamailio.gpg] \
