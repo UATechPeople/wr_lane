@@ -15,6 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     kamailio-sqlite-modules \
     && rm -rf /var/lib/apt/lists/*
 
+# Bake the config into the image so it works without a compose volume mount (e.g. PaaS).
+# Under docker-compose the read-only volume mount overrides this, so it stays harmless there.
+COPY kamailio/kamailio.cfg /etc/kamailio/kamailio.cfg
+
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

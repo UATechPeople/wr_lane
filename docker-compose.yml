@@ -1,6 +1,7 @@
 services:
   cabinet:
     build: .
+    image: ghcr.io/uatechpeople/wr_lane-cabinet:latest
     ports:
       - "3500:3500"
     environment:
@@ -27,6 +28,7 @@ services:
       build:
         context: ./sip_proxy
         dockerfile: docker/Dockerfile
+      image: ghcr.io/uatechpeople/wr_lane-kamailio:latest
       ports:
         - "5060:5060/udp"
         - "5060:5060/tcp"
