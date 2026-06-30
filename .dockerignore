@@ -1,0 +1,39 @@
+# Cabinet build context = repo root. Keep secrets, VCS, deps and deploy tooling
+# out of the build context (the Dockerfile only COPYs package.json, bun.lock,
+# tsconfig.json, src/, public/, scripts/).
+
+# secrets / env — must never enter the build context
+.env
+.env.*
+!.env.example
+
+# VCS & CI
+.git
+.gitignore
+.github
+
+# deps & build output (reinstalled / rebuilt inside the image)
+node_modules
+dist
+
+# deploy tooling — not part of the app image
+.deploy
+config
+bin
+sip_proxy
+Dockerfile
+.dockerignore
+
+# docs
+*.md
+docs
+
+# local data / artifacts
+*.sqlite
+*.sqlite-*
+*.cookies
+test-*.csv
+
+# editor / OS cruft
+.DS_Store
+.idea
