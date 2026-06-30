@@ -1,0 +1,99 @@
+# Hidden Numbers bundle — cabinet (web app) + kamailio (accessory) on one droplet.
+# Kamal builds/pushes the cabinet image; the kamailio image is built separately
+# (buildx) and only pulled here. Both share the default `kamal` docker network.
+service: wr_lane
+
+# Cabinet image — built from the root Dockerfile, pushed to ghcr.
+# Personal namespace: the org restricts package creation, RiskLight can't create
+# packages under uatechpeople/. Pulled on the droplet with the same PAT.
+image: risklight/wr_lane-cabinet
+
+servers:
+  web:
+    - 157.245.75.233
+
+# No domain yet → serve plain HTTP on port 80 → cabinet on 3500.
+# When a domain exists: set ssl: true + host: <domain> and redeploy.
+proxy:
+  ssl: false
+  app_port: 3500
+  healthcheck:
+    path: /health
+
+registry:
+  server: ghcr.io
+  username: RiskLight
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+
+# Cabinet env. Non-secret in clear, secrets pulled from .kamal/secrets.
+env:
+  clear:
+    PORT: 3500
+    FF3_TWEAK: D8E7920AFA330A73
+    ROUTE_DIGIT: "9"
+    CABINET_USER: admin
+    INTERNAL_HOST: 0.0.0.0
+    INTERNAL_PORT: "3501"
+    WR_PLAYER_SEGMENT: hidden_base
+    DB_PATH: /data/cabinet.sqlite
+  secret:
+    - FF3_KEY
+    - DECRYPT_KEY
+    - CABINET_PASSWORD
+    - CLIENT_PREFIX
+    - WR_BASE_URL
+    - WR_SLUG
+    - WR_API_KEY
+
+volumes:
+  - "cabinet-data:/data"
+
+accessories:
+  # Detokenize sidecar: same cabinet image, but only the internal :3501 listener
+  # matters here. decryptToken is pure FF3 (no DB), so this needs no volume and
+  # gets a stable name (wr_lane-detoken) on the kamal network — which the web app
+  # container does NOT (its name carries the deploy sha). kamailio targets this.
+  detoken:
+    image: ghcr.io/risklight/wr_lane-cabinet:latest
+    host: 157.245.75.233
+    env:
+      clear:
+        PORT: "3500"
+        FF3_TWEAK: D8E7920AFA330A73
+        ROUTE_DIGIT: "9"
+        INTERNAL_HOST: 0.0.0.0
+        INTERNAL_PORT: "3501"
+        DB_PATH: /tmp/detoken.sqlite
+      secret:
+        - FF3_KEY
+        - DECRYPT_KEY
+        - CLIENT_PREFIX
+
+  kamailio:
+    image: ghcr.io/risklight/wr_lane-kamailio:latest
+    host: 157.245.75.233
+    port: "5060:5060/udp"
+    env:
+      clear:
+        PROTON_GW_PORT: "5060"
+        MMD_GW_PORT: "5060"
+        DIDGLOBAL_GW_PORT: "5060"
+        DB_URL: sqlite:///var/lib/kamailio/kamailio.db
+        DETOKEN_URL: http://wr_lane-detoken:3501/detokenize
+      secret:
+        - MY_PUBLIC_IP
+        - DECRYPT_KEY
+        - WEBHOOK_KEY
+        - ELEVEN_LAB_PROTON_TOKEN
+        - ELEVEN_LAB_MMD_TOKEN
+        - ELEVEN_LAB_DIDGLOBAL_TOKEN
+        - PROTON_GW_IP
+        - PROTON_TECH_PREFIX
+        - MMD_GW_IP
+        - MMD_AUTH_USER
+        - MMD_AUTH_PASS
+        - DIDGLOBAL_GW_IP

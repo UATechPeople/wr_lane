@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# One-shot full-bundle deploy. `kamal deploy` only handles the web app (cabinet);
+# accessories (kamailio, detoken) are not built or updated by it. This wraps the
+# whole flow:
+#   1. build + push the kamailio image (Kamal never builds accessory images)
+#   2. kamal deploy        -> builds/pushes/redeploys the cabinet web app
+#   3. accessory reboot     -> pulls the fresh images and restarts kamailio + detoken
+#                              (detoken runs the cabinet image kamal deploy just pushed)
+#
+# Requires KAMAL_REGISTRY_PASSWORD (ghcr PAT) exported. Change NS when moving the
+# images to the org namespace (must match config/deploy.yml).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+NS="${WR_GHCR_NS:-risklight}"
+
+if [ -z "${KAMAL_REGISTRY_PASSWORD:-}" ]; then
+  echo "ERROR: export KAMAL_REGISTRY_PASSWORD=<ghcr PAT with write:packages> first" >&2
+  exit 1
+fi
+
+echo "==> [1/3] build + push kamailio image"
+docker buildx build --platform linux/amd64 --builder wrbuild \
+  -t "ghcr.io/${NS}/wr_lane-kamailio:latest" \
+  -f ./sip_proxy/docker/Dockerfile --push ./sip_proxy
+
+echo "==> [2/3] kamal deploy (cabinet web app)"
+./bin/kamal deploy
+
+echo "==> [3/3] reboot accessories (kamailio + detoken)"
+./bin/kamal accessory reboot kamailio
+./bin/kamal accessory reboot detoken
+
+echo "==> done. full bundle deployed."

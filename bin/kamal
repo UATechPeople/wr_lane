@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Dockerised Kamal runner (system ruby is 2.6, Kamal 2 needs ruby 3; host docker
+# is OrbStack). Mounts: repo as /workdir, host docker daemon (build/push), and
+# ~/.ssh read-only so net-ssh uses the id_ed25519 key + known_hosts to reach the
+# droplet. Export KAMAL_REGISTRY_PASSWORD (ghcr PAT) before deploying.
+#
+# The host ~/.docker/config.json sets credsStore=osxkeychain and
+# currentContext=orbstack, neither of which exists inside the linux container, so
+# we mount a sanitised copy (both stripped). Kamal's own `docker login` then
+# writes inline auth, and the docker CLI falls back to /var/run/docker.sock.
+set -euo pipefail
+
+TTY=""
+if [ -t 0 ] && [ -t 1 ]; then TTY="-it"; fi
+
+CFG="$(mktemp -d)"
+trap 'rm -rf "$CFG"' EXIT
+if [ -f "$HOME/.docker/config.json" ]; then
+  sed -E '/"credsStore"/d; /"currentContext"/d; /"credHelpers"/,/}/d' \
+    "$HOME/.docker/config.json" > "$CFG/config.json" 2>/dev/null || echo '{}' > "$CFG/config.json"
+else
+  echo '{}' > "$CFG/config.json"
+fi
+
+exec docker run --rm $TTY \
+  -v "$PWD:/workdir" -w /workdir \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$CFG:/root/.docker" \
+  -v "$HOME/.ssh:/root/.ssh:ro" \
+  -e KAMAL_REGISTRY_PASSWORD \
+  ghcr.io/basecamp/kamal:latest "$@"
