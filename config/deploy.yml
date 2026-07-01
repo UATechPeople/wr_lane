@@ -3,10 +3,8 @@
 # (buildx) and only pulled here. Both share the default `kamal` docker network.
 service: wr_lane
 
-# Cabinet image — built from the root Dockerfile, pushed to ghcr.
-# Personal namespace: the org restricts package creation, RiskLight can't create
-# packages under uatechpeople/. Pulled on the droplet with the same PAT.
-image: risklight/wr_lane-cabinet
+# Cabinet image — built from the root Dockerfile, pushed to ghcr under the org.
+image: uatechpeople/wr_lane-cabinet
 
 servers:
   web:
@@ -22,7 +20,7 @@ proxy:
 
 registry:
   server: ghcr.io
-  username: RiskLight
+  username: Shamash2014
   password:
     - KAMAL_REGISTRY_PASSWORD
 
@@ -58,7 +56,7 @@ accessories:
   # gets a stable name (wr_lane-detoken) on the kamal network — which the web app
   # container does NOT (its name carries the deploy sha). kamailio targets this.
   detoken:
-    image: ghcr.io/risklight/wr_lane-cabinet:latest
+    image: ghcr.io/uatechpeople/wr_lane-cabinet:latest
     host: 157.245.75.233
     env:
       clear:
@@ -74,7 +72,7 @@ accessories:
         - CLIENT_PREFIX
 
   kamailio:
-    image: ghcr.io/risklight/wr_lane-kamailio:latest
+    image: ghcr.io/uatechpeople/wr_lane-kamailio:latest
     host: 157.245.75.233
     port: "5060:5060/udp"
     env:
@@ -94,7 +92,6 @@ accessories:
         - PROTON_GW_IP
         - PROTON_TECH_PREFIX
         - MMD_GW_IP
-        - MMD_GW_PORT
         - MMD_AUTH_USER
         - MMD_AUTH_PASS
         - DIDGLOBAL_GW_IP
