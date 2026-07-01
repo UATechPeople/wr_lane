@@ -94,6 +94,7 @@ accessories:
         - PROTON_GW_IP
         - PROTON_TECH_PREFIX
         - MMD_GW_IP
+        - MMD_GW_PORT
         - MMD_AUTH_USER
         - MMD_AUTH_PASS
         - DIDGLOBAL_GW_IP
