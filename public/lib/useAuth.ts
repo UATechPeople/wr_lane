@@ -7,11 +7,15 @@ export function useAuth() {
   const [status, setStatus] = useState<AuthStatus>("checking");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
 
   useEffect(() => {
     api
       .me()
-      .then(() => setStatus("in"))
+      .then((m) => {
+        setPushEnabled(!!m.pushEnabled);
+        setStatus("in");
+      })
       .catch(() => setStatus("out"));
   }, []);
 
@@ -20,8 +24,13 @@ export function useAuth() {
     setError("");
     try {
       const res = await api.login(user, pass);
-      if (res.ok) setStatus("in");
-      else setError(res.error ?? "Invalid credentials");
+      if (res.ok) {
+        const m = await api.me().catch(() => null);
+        setPushEnabled(!!m?.pushEnabled);
+        setStatus("in");
+      } else {
+        setError(res.error ?? "Invalid credentials");
+      }
     } finally {
       setBusy(false);
     }
@@ -32,5 +41,5 @@ export function useAuth() {
     setStatus("out");
   }
 
-  return { status, error, busy, login, logout };
+  return { status, error, busy, pushEnabled, login, logout };
 }

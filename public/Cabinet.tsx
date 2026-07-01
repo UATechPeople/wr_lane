@@ -10,7 +10,7 @@ import { EditDialog } from "./components/EditDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Toast } from "./components/Toast";
 
-export function Cabinet({ onLogout }: { onLogout: () => void }) {
+export function Cabinet({ onLogout, pushEnabled }: { onLogout: () => void; pushEnabled: boolean }) {
   const c = useCabinet();
 
   return (
@@ -31,9 +31,11 @@ export function Cabinet({ onLogout }: { onLogout: () => void }) {
             >
               Export CSV
             </a>
-            <Button mode="secondary" disabled={c.busy || c.total === 0} onClick={c.push}>
-              Push to Platform →
-            </Button>
+            {pushEnabled && (
+              <Button mode="secondary" disabled={c.busy || c.total === 0} onClick={c.push}>
+                Push to Platform →
+              </Button>
+            )}
             <Button onClick={c.openAdd}>
               <PlusIcon className="h-4 w-4" />
               Add numbers

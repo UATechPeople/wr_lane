@@ -124,7 +124,7 @@ const api = new Elysia({ prefix: "/api" })
     set.headers["Set-Cookie"] = "cabinet_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     return { ok: true };
   })
-  .get("/me", () => ({ user: config.auth.user ?? "operator" }))
+  .get("/me", () => ({ user: config.auth.user ?? "operator", pushEnabled: config.pushEnabled }))
   // Create from a JSON list of phones (paste box).
   .post("/numbers", ({ body }) => ingest(body.numbers.map((p) => ({ phone: p })), body.label?.trim() || "Pasted list"), {
     body: t.Object({ numbers: t.Array(t.String()), label: t.Optional(t.String()) }),
@@ -268,6 +268,10 @@ const api = new Elysia({ prefix: "/api" })
 
   // Push the whole base to Platform as player events. Idempotent (WR dedupes on event_id).
   .post("/push", async ({ set }) => {
+    if (!config.pushEnabled) {
+      set.status = 403;
+      return { error: "push is disabled (set WR_PUSH_ENABLED=true to enable)" };
+    }
     try {
       const results = await pushRecords(allRecords());
       const sentTokens = results.filter((r) => r.ok).map((r) => r.token);

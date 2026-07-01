@@ -53,7 +53,7 @@ async function postFile<T>(url: string, file: File, headerMap?: Record<string, s
 const json = (r: Response) => r.json();
 
 export const api = {
-  me: (): Promise<{ user: string }> =>
+  me: (): Promise<{ user: string; pushEnabled: boolean }> =>
     fetch("/api/me").then((r) => {
       if (!r.ok) throw new Error("unauthenticated");
       return r.json();

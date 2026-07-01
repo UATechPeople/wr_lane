@@ -11,5 +11,5 @@ export function App() {
   if (auth.status === "out") {
     return <Login onLogin={auth.login} error={auth.error} busy={auth.busy} />;
   }
-  return <Cabinet onLogout={auth.logout} />;
+  return <Cabinet onLogout={auth.logout} pushEnabled={auth.pushEnabled} />;
 }
