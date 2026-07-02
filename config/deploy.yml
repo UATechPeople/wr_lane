@@ -75,6 +75,8 @@ accessories:
     image: ghcr.io/uatechpeople/wr_lane-kamailio:latest
     host: 157.245.75.233
     port: "5060:5060/udp"
+    volumes:
+      - "kamailio-data:/var/lib/kamailio"
     env:
       clear:
         PROTON_GW_PORT: "5060"
