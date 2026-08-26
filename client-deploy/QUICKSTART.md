@@ -62,4 +62,4 @@ docker compose down      # stop
 
 - Keep `.env` private — it holds your encryption keys.
 - To enable outbound calling, fill your SIP-trunk creds in `.env`
-  (`MMD_GW_IP` / `MMD_GW_PORT` / `MMD_AUTH_USER` / `MMD_AUTH_PASS`) and re-run `./up.sh`.
+  (`TRUNK_DIGEST_HOST` / `TRUNK_DIGEST_PORT` / `TRUNK_DIGEST_USER` / `TRUNK_DIGEST_PASS`) and re-run `./up.sh`.

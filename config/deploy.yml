@@ -79,21 +79,21 @@ accessories:
       - "kamailio-data:/var/lib/kamailio"
     env:
       clear:
-        PROTON_GW_PORT: "5060"
-        MMD_GW_PORT: "5060"
-        DIDGLOBAL_GW_PORT: "5060"
+        TRUNK_IPAUTH_PORT: "5060"
+        TRUNK_DIGEST_PORT: "5060"
+        TRUNK_DIRECT_PORT: "5060"
         DB_URL: sqlite:///var/lib/kamailio/kamailio.db
         DETOKEN_URL: http://wr_lane-detoken:3501/detokenize
       secret:
         - MY_PUBLIC_IP
         - DECRYPT_KEY
         - WEBHOOK_KEY
-        - ELEVEN_LAB_PROTON_TOKEN
-        - ELEVEN_LAB_MMD_TOKEN
-        - ELEVEN_LAB_DIDGLOBAL_TOKEN
-        - PROTON_GW_IP
-        - PROTON_TECH_PREFIX
-        - MMD_GW_IP
-        - MMD_AUTH_USER
-        - MMD_AUTH_PASS
-        - DIDGLOBAL_GW_IP
+        - TRUNK_IPAUTH_API_KEY
+        - TRUNK_DIGEST_API_KEY
+        - TRUNK_DIRECT_API_KEY
+        - TRUNK_IPAUTH_HOST
+        - TRUNK_IPAUTH_PREFIX
+        - TRUNK_DIGEST_HOST
+        - TRUNK_DIGEST_USER
+        - TRUNK_DIGEST_PASS
+        - TRUNK_DIRECT_HOST

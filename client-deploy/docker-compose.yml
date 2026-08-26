@@ -22,6 +22,8 @@ services:
       WR_SLUG: ${WR_SLUG:-}
       WR_API_KEY: ${WR_API_KEY:-}
       WR_PLAYER_SEGMENT: ${WR_PLAYER_SEGMENT:-hidden_base}
+      WR_EVENT_TYPE: ${WR_EVENT_TYPE:-player.registered}
+      WR_COHORT: ${WR_COHORT:-}
       DB_PATH: /data/cabinet.sqlite
     volumes:
       - cabinet-data:/data
@@ -39,18 +41,18 @@ services:
       WEBHOOK_KEY: ${WEBHOOK_KEY:?set WEBHOOK_KEY in .env}
       DB_URL: ${DB_URL:-sqlite:///var/lib/kamailio/kamailio.db}
       DETOKEN_URL: ${DETOKEN_URL:-http://cabinet:3501/detokenize}
-      ELEVEN_LAB_PROTON_TOKEN: ${ELEVEN_LAB_PROTON_TOKEN:-placeholder}
-      ELEVEN_LAB_MMD_TOKEN: ${ELEVEN_LAB_MMD_TOKEN:?set ELEVEN_LAB_MMD_TOKEN in .env}
-      ELEVEN_LAB_DIDGLOBAL_TOKEN: ${ELEVEN_LAB_DIDGLOBAL_TOKEN:-placeholder}
-      PROTON_GW_IP: ${PROTON_GW_IP:-127.0.0.1}
-      PROTON_GW_PORT: ${PROTON_GW_PORT:-5060}
-      PROTON_TECH_PREFIX: ${PROTON_TECH_PREFIX:-}
-      MMD_GW_IP: ${MMD_GW_IP:-}
-      MMD_GW_PORT: ${MMD_GW_PORT:-5060}
-      MMD_AUTH_USER: ${MMD_AUTH_USER:-}
-      MMD_AUTH_PASS: ${MMD_AUTH_PASS:-}
-      DIDGLOBAL_GW_IP: ${DIDGLOBAL_GW_IP:-127.0.0.1}
-      DIDGLOBAL_GW_PORT: ${DIDGLOBAL_GW_PORT:-5060}
+      TRUNK_IPAUTH_API_KEY: ${TRUNK_IPAUTH_API_KEY:-placeholder}
+      TRUNK_DIGEST_API_KEY: ${TRUNK_DIGEST_API_KEY:-placeholder}
+      TRUNK_DIRECT_API_KEY: ${TRUNK_DIRECT_API_KEY:-placeholder}
+      TRUNK_IPAUTH_HOST: ${TRUNK_IPAUTH_HOST:-127.0.0.1}
+      TRUNK_IPAUTH_PORT: ${TRUNK_IPAUTH_PORT:-5060}
+      TRUNK_IPAUTH_PREFIX: ${TRUNK_IPAUTH_PREFIX:-}
+      TRUNK_DIGEST_HOST: ${TRUNK_DIGEST_HOST:-}
+      TRUNK_DIGEST_PORT: ${TRUNK_DIGEST_PORT:-5060}
+      TRUNK_DIGEST_USER: ${TRUNK_DIGEST_USER:-}
+      TRUNK_DIGEST_PASS: ${TRUNK_DIGEST_PASS:-}
+      TRUNK_DIRECT_HOST: ${TRUNK_DIRECT_HOST:-127.0.0.1}
+      TRUNK_DIRECT_PORT: ${TRUNK_DIRECT_PORT:-5060}
     depends_on:
       - cabinet
     restart: unless-stopped

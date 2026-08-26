@@ -8,6 +8,47 @@ cd "$(dirname "$0")"
 
 [ -f .env ] || { echo "ERROR: .env is missing next to this script." >&2; exit 1; }
 
+# Installs made before the trunk settings were renamed ship a rename map next to
+# this script. It is absent on fresh installs and can be deleted once applied.
+if [ -f legacy-names.map ]; then
+  RENAMED=0
+  BACKUP=".env.backup.$(date +%Y%m%d%H%M%S)"
+  cp .env "$BACKUP"
+  while IFS=: read -r OLD NEW; do
+    [ -z "${OLD:-}" ] && continue
+    case "$OLD" in \#*) continue ;; esac
+    grep -q "^[[:space:]]*${OLD}=" .env || continue
+    if grep -q "^[[:space:]]*${NEW}=" .env; then
+      sed -i.tmp "/^[[:space:]]*${OLD}=/d" .env
+    else
+      sed -i.tmp "s/^[[:space:]]*${OLD}=/${NEW}=/" .env
+    fi
+    rm -f .env.tmp
+    RENAMED=$((RENAMED + 1))
+  done < legacy-names.map
+  if [ "$RENAMED" -gt 0 ]; then
+    echo "==> renamed $RENAMED settings to the current names (backup: $BACKUP)"
+    rm -f legacy-names.map
+  else
+    rm -f "$BACKUP"
+  fi
+fi
+
+# Updates may introduce settings that an existing .env does not have yet. Add the
+# missing ones with their defaults; values already present are never touched.
+if [ -f env.defaults ]; then
+  ADDED=0
+  while IFS='=' read -r KEY VAL; do
+    [ -z "${KEY:-}" ] && continue
+    case "$KEY" in \#*) continue ;; esac
+    grep -q "^[[:space:]]*${KEY}=" .env && continue
+    [ "$ADDED" -eq 0 ] && printf '\n# ===== added by update =====\n' >> .env
+    echo "${KEY}=${VAL}" >> .env
+    ADDED=$((ADDED + 1))
+  done < env.defaults
+  [ "$ADDED" -gt 0 ] && echo "==> added $ADDED new settings to .env (existing values untouched)"
+fi
+
 # 1. generate this server's encryption keys ONCE into keys.env (never regenerated)
 ./keygen.sh
 
