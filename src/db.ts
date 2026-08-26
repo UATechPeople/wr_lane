@@ -30,11 +30,51 @@ db.run(`
   )
 `);
 
+const ADDED_NUMBER_COLUMNS: Record<string, string> = {
+  user_id: "TEXT",
+  outcome: "TEXT",
+  result: "TEXT",
+  call_attempts: "INTEGER",
+  result_at: "TEXT",
+  delivery_status: "TEXT",
+  delivered_at: "TEXT",
+  delivery_error: "TEXT",
+};
+
+const presentColumns = new Set((db.query("PRAGMA table_info(numbers)").all() as { name: string }[]).map((c) => c.name));
+for (const [name, type] of Object.entries(ADDED_NUMBER_COLUMNS)) {
+  if (!presentColumns.has(name)) db.run(`ALTER TABLE numbers ADD COLUMN ${name} ${type}`);
+}
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS outbox (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    number_id    INTEGER NOT NULL,
+    dedupe_key   TEXT NOT NULL UNIQUE,
+    payload      TEXT NOT NULL,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    next_try_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    last_error   TEXT,
+    delivered_at TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+db.run("CREATE INDEX IF NOT EXISTS outbox_pending ON outbox (delivered_at, next_try_at)");
+
 export type NumberRow = {
   id: number;
   upload_id: number | null;
   real: string;
   token: string;
+  user_id: string | null;
   external_id: string | null;
   first_name: string | null;
   last_name: string | null;
@@ -44,11 +84,19 @@ export type NumberRow = {
   cohort: string | null;
   created_at: string;
   pushed_at: string | null;
+  outcome: string | null;
+  result: string | null;
+  call_attempts: number | null;
+  result_at: string | null;
+  delivery_status: string | null;
+  delivered_at: string | null;
+  delivery_error: string | null;
 };
 
 export type NewNumber = {
   real: string;
   token: string;
+  user_id?: string;
   external_id?: string;
   first_name?: string;
   last_name?: string;
@@ -61,7 +109,7 @@ export type NewNumber = {
 export type UploadRow = { id: number; label: string; created_at: string; count: number };
 
 const COLS =
-  "id, upload_id, real, token, external_id, first_name, last_name, country, language, segment, cohort, created_at, pushed_at";
+  "id, upload_id, real, token, user_id, external_id, first_name, last_name, country, language, segment, cohort, created_at, pushed_at, outcome, result, call_attempts, result_at, delivery_status, delivered_at, delivery_error";
 
 // ── uploads ──────────────────────────────────────────────────────────────────
 
@@ -104,9 +152,10 @@ export function rowsForUpload(id: number): NumberRow[] {
 
 export function insertNumbers(uploadId: number, rows: NewNumber[]): void {
   const stmt = db.prepare(
-    `INSERT OR IGNORE INTO numbers
-       (upload_id, real, token, external_id, first_name, last_name, country, language, segment, cohort)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO numbers
+       (upload_id, real, token, user_id, external_id, first_name, last_name, country, language, segment, cohort)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(real) DO UPDATE SET user_id = COALESCE(excluded.user_id, numbers.user_id)`,
   );
   const tx = db.transaction((items: NewNumber[]) => {
     for (const r of items) {
@@ -114,6 +163,7 @@ export function insertNumbers(uploadId: number, rows: NewNumber[]): void {
         uploadId,
         r.real,
         r.token,
+        r.user_id ?? null,
         r.external_id ?? null,
         r.first_name ?? null,
         r.last_name ?? null,
@@ -136,8 +186,8 @@ function filterClause(q?: string, uploadId?: number): { sql: string; params: unk
   }
   if (q && q.trim()) {
     const like = `%${q.trim()}%`;
-    conds.push("(real LIKE ? OR token LIKE ? OR external_id LIKE ? OR segment LIKE ?)");
-    params.push(like, like, like, like);
+    conds.push("(real LIKE ? OR token LIKE ? OR user_id LIKE ? OR external_id LIKE ? OR segment LIKE ?)");
+    params.push(like, like, like, like, like);
   }
   return { sql: conds.length ? ` WHERE ${conds.join(" AND ")}` : "", params };
 }
@@ -162,7 +212,7 @@ export function allRecords(): NumberRow[] {
   return db.query(`SELECT ${COLS} FROM numbers ORDER BY id`).all() as NumberRow[];
 }
 
-const META_FIELDS = ["external_id", "first_name", "last_name", "country", "language", "segment", "cohort"] as const;
+const META_FIELDS = ["user_id", "external_id", "first_name", "last_name", "country", "language", "segment", "cohort"] as const;
 
 export function updateNumber(id: number, patch: Partial<NewNumber>): boolean {
   const sets: string[] = [];
@@ -197,6 +247,118 @@ export function markPushed(tokens: string[]): void {
     for (const t of items) stmt.run(t);
   });
   tx(tokens);
+}
+
+export function uploadIdByLabel(label: string): number {
+  const row = db.query("SELECT id FROM uploads WHERE label = ? ORDER BY id LIMIT 1").get(label) as { id: number } | undefined;
+  if (row) return row.id;
+  return createUpload(label);
+}
+
+export function getByReal(real: string): NumberRow | null {
+  return (db.query(`SELECT ${COLS} FROM numbers WHERE real = ?`).get(real) as NumberRow) ?? null;
+}
+
+export function getByToken(token: string): NumberRow | null {
+  return (db.query(`SELECT ${COLS} FROM numbers WHERE token = ?`).get(token) as NumberRow) ?? null;
+}
+
+export type CallResult = {
+  leadId: string | null;
+  outcome: string | null;
+  result: string | null;
+  attempts: number | null;
+};
+
+export function recordCallResult(id: number, r: CallResult): void {
+  db.prepare(
+    `UPDATE numbers
+       SET external_id = COALESCE(?, external_id),
+           outcome = ?, result = ?, call_attempts = ?, result_at = datetime('now'),
+           delivery_status = CASE WHEN ? IS NULL THEN delivery_status ELSE 'pending' END,
+           delivery_error = NULL
+     WHERE id = ?`,
+  ).run(r.leadId, r.outcome, r.result, r.attempts, r.result, id);
+}
+
+export function setDeliveryState(id: number, status: string, error?: string | null): void {
+  db.prepare(
+    `UPDATE numbers
+       SET delivery_status = ?,
+           delivery_error = ?,
+           delivered_at = CASE WHEN ? = 'delivered' THEN datetime('now') ELSE delivered_at END
+     WHERE id = ?`,
+  ).run(status, error ?? null, status, id);
+}
+
+export function getSetting(key: string): string | null {
+  const row = db.query("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setSetting(key: string, value: string): void {
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+  ).run(key, value);
+}
+
+export type OutboxRow = {
+  id: number;
+  number_id: number;
+  dedupe_key: string;
+  payload: string;
+  attempts: number;
+  next_try_at: string;
+  last_error: string | null;
+  delivered_at: string | null;
+  created_at: string;
+};
+
+const OUTBOX_COLS = "id, number_id, dedupe_key, payload, attempts, next_try_at, last_error, delivered_at, created_at";
+
+export function outboxEnqueue(numberId: number, dedupeKey: string, payload: unknown): boolean {
+  return (
+    db
+      .prepare("INSERT OR IGNORE INTO outbox (number_id, dedupe_key, payload) VALUES (?, ?, ?)")
+      .run(numberId, dedupeKey, JSON.stringify(payload)).changes > 0
+  );
+}
+
+export function outboxClaim(limit = 50, leaseSeconds = 300): OutboxRow[] {
+  return db
+    .query(
+      `UPDATE outbox SET next_try_at = datetime('now', ?)
+        WHERE id IN (
+          SELECT id FROM outbox
+           WHERE delivered_at IS NULL AND next_try_at <= datetime('now')
+           ORDER BY next_try_at LIMIT ?
+        )
+        RETURNING ${OUTBOX_COLS}`,
+    )
+    .all(`+${leaseSeconds} seconds`, limit) as OutboxRow[];
+}
+
+export function outboxMarkDelivered(id: number): void {
+  db.prepare("UPDATE outbox SET delivered_at = datetime('now'), last_error = NULL WHERE id = ?").run(id);
+}
+
+export function outboxMarkFailed(id: number, error: string, delaySeconds: number): void {
+  db.prepare(
+    `UPDATE outbox
+       SET attempts = attempts + 1,
+           last_error = ?,
+           next_try_at = datetime('now', ?)
+     WHERE id = ?`,
+  ).run(error, `+${Math.max(1, Math.round(delaySeconds))} seconds`, id);
+}
+
+export function outboxRequeueForNumber(numberId: number): boolean {
+  return (
+    db
+      .prepare("UPDATE outbox SET delivered_at = NULL, next_try_at = datetime('now'), attempts = 0 WHERE number_id = ?")
+      .run(numberId).changes > 0
+  );
 }
 
 export { db };

@@ -13,7 +13,7 @@ import * as XLSX from "xlsx";
 
 export type UploadRecord = {
   phone: string;
-  external_id?: string;
+  user_id?: string;
   first_name?: string;
   last_name?: string;
   country?: string;
@@ -26,7 +26,7 @@ export type HeaderMap = Record<string, keyof UploadRecord>;
 
 const FIELD_ALIASES: Record<keyof UploadRecord, string[]> = {
   phone: ["phone_e164", "phone", "number", "msisdn"],
-  external_id: ["external_id"],
+  user_id: ["user_id", "external_id"],
   first_name: ["first_name"],
   last_name: ["last_name"],
   country: ["country"],
@@ -98,7 +98,7 @@ function extract(rows: unknown[][], colOf: Resolved["colOf"], from: number, to: 
     if (!phone) continue;
     out.push({
       phone,
-      external_id: cell(rows[i], "external_id"),
+      user_id: cell(rows[i], "user_id"),
       first_name: cell(rows[i], "first_name"),
       last_name: cell(rows[i], "last_name"),
       country: cell(rows[i], "country"),

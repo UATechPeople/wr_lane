@@ -20,8 +20,28 @@ import {
   type NewNumber,
 } from "./db";
 import { toCoreCsv } from "./csv";
-import { pushRecords } from "./winriders";
+import { fetchLeadTranscript, pushRecords } from "./winriders";
 import { parseRecords, previewFile, type UploadRecord, type HeaderMap } from "./upload";
+import { hooks } from "./hooks";
+import { drainOutbox, startOutboxCron } from "./outbox";
+import { sendToCrm } from "./crm";
+import {
+  DEFAULT_CRM_CONFIG,
+  buildBody,
+  getCoreKey,
+  getCrmConfig,
+  getInboundKey,
+  saveCrmConfig,
+  getWrConfig,
+  saveWrConfig,
+  setCoreKey,
+  setInboundKey,
+  SOURCE_FIELDS,
+  WR_SOURCE_FIELDS,
+  WR_TARGET_FIELDS,
+  TOKEN_ONLY_TARGETS,
+} from "./webhook";
+import { outboxRequeueForNumber, setDeliveryState } from "./db";
 
 function coerceHeaderMap(hm: unknown): HeaderMap | undefined {
   if (!hm) return undefined;
@@ -41,7 +61,7 @@ function ingest(records: UploadRecord[], label: string): { uploadId: number; acc
       ok.push({
         real: rec.phone,
         token,
-        external_id: rec.external_id,
+        user_id: rec.user_id,
         first_name: rec.first_name,
         last_name: rec.last_name,
         country: rec.country,
@@ -60,6 +80,7 @@ function ingest(records: UploadRecord[], label: string): { uploadId: number; acc
 }
 
 const metaBody = {
+  user_id: t.Optional(t.String()),
   external_id: t.Optional(t.String()),
   first_name: t.Optional(t.String()),
   last_name: t.Optional(t.String()),
@@ -266,6 +287,111 @@ const api = new Elysia({ prefix: "/api" })
     return toCoreCsv(allRecords());
   })
 
+
+  .get("/settings", () => ({
+    crm: getCrmConfig(),
+    wr: getWrConfig(),
+    inboundKey: getInboundKey(),
+    coreKey: getCoreKey(),
+    sourceFields: SOURCE_FIELDS,
+    wrTargetFields: WR_TARGET_FIELDS,
+    wrSourceFields: WR_SOURCE_FIELDS,
+    tokenOnlyTargets: TOKEN_ONLY_TARGETS,
+    defaults: DEFAULT_CRM_CONFIG,
+  }))
+
+  .put(
+    "/settings/crm",
+    ({ body, set }) => {
+      try {
+        return { crm: saveCrmConfig(body) };
+      } catch (e) {
+        set.status = 422;
+        return { error: String((e as Error).message) };
+      }
+    },
+    { body: t.Any() },
+  )
+
+  .put(
+    "/settings/wr",
+    ({ body, set }) => {
+      try {
+        return { wr: saveWrConfig(body) };
+      } catch (e) {
+        set.status = 422;
+        return { error: String((e as Error).message) };
+      }
+    },
+    { body: t.Any() },
+  )
+
+  .post(
+    "/settings/keys/:which",
+    ({ params, set }) => {
+      const value = crypto.randomUUID().replace(/-/g, "");
+      if (params.which === "inbound") {
+        setInboundKey(value);
+        return { key: value };
+      }
+      if (params.which === "core") {
+        setCoreKey(value);
+        return { key: value };
+      }
+      set.status = 404;
+      return { error: "unknown key" };
+    },
+  )
+
+  .post("/settings/test", async ({ set }) => {
+    const crm = getCrmConfig();
+    if (!crm.url) {
+      set.status = 422;
+      return { error: "set the CRM url first" };
+    }
+    const body = buildBody(crm, {
+      phone: "+380000000000",
+      token: "900000000000000",
+      user_id: "test-user",
+      result: "send_sms",
+      outcome: "agreed",
+      attempts: 1,
+      lead_id: "00000000-0000-0000-0000-000000000000",
+      campaign_id: "00000000-0000-0000-0000-000000000000",
+      event: "cabinet.test",
+      sent_at: new Date().toISOString(),
+    });
+    return { sent: body, response: await sendToCrm(crm, body) };
+  })
+
+  .post("/numbers/:id/resend", ({ params, set }) => {
+    const id = Number(params.id);
+    if (!getNumber(id)) {
+      set.status = 404;
+      return { error: "not found" };
+    }
+    if (!outboxRequeueForNumber(id)) {
+      set.status = 409;
+      return { error: "nothing to resend for this number" };
+    }
+    setDeliveryState(id, "pending");
+    return { queued: true };
+  })
+
+  .post("/outbox/drain", () => drainOutbox())
+
+  .get("/numbers/:id/transcript", async ({ params, set }) => {
+    const row = getNumber(Number(params.id));
+    if (!row) {
+      set.status = 404;
+      return { error: "not found" };
+    }
+    if (!row.external_id) {
+      return { available: false, calls: [], error: "no call result received for this number yet" };
+    }
+    return { leadId: row.external_id, ...(await fetchLeadTranscript(row.external_id)) };
+  })
+
   // Push the whole base to WinRiders as player events. Idempotent (WR dedupes on event_id).
   .post("/push", async ({ set }) => {
     if (!config.pushEnabled) {
@@ -294,10 +420,12 @@ const api = new Elysia({ prefix: "/api" })
 // fullstack server does this at runtime, but production bundling does not).
 const app = new Elysia()
   .get("/health", () => ({ ok: true, count: countNumbers(), clientPrefix: config.clientPrefix ?? null }))
+  .use(hooks)
   .use(api)
   .use(staticPlugin({ assets: "dist", prefix: "/", indexHTML: true }))
   .listen(config.port);
 
+startOutboxCron();
 console.log(`[hidden-numbers] cabinet listening on :${config.port}`);
 if (!config.auth.user || !config.auth.pass) {
   console.warn("[hidden-numbers] ⚠ Auth DISABLED — set CABINET_USER and CABINET_PASSWORD to protect the cabinet.");

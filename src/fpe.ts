@@ -53,3 +53,8 @@ export function decryptToken(token: string): string {
   const real = body.slice(BODY_WIDTH - len);
   return "+" + real;
 }
+
+export function looksLikeToken(value: string): boolean {
+  const digits = value.replace(/\D/g, "");
+  return digits.length === 15 && digits.startsWith(config.routeDigit);
+}
