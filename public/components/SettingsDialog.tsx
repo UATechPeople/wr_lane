@@ -4,6 +4,7 @@ import { Modal } from "./Modal";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { StatusBadge } from "./StatusBadge";
+import { Select } from "./Select";
 import type { CrmConfig, Settings, TestResult, WrConfig } from "../lib/api";
 
 type HeaderPair = { name: string; value: string };
@@ -110,8 +111,8 @@ export function SettingsDialog({
           </div>
           <Input
             label="API key *"
-            type="password"
             value={wr.apiKey}
+            hint="Issued by WinRiders together with the client slug"
             onChange={(e) => patchWr({ apiKey: e.target.value })}
           />
           <div className="flex gap-2">
@@ -143,42 +144,22 @@ export function SettingsDialog({
             return (
               <div key={i} className="flex items-end gap-2">
                 <div className="flex-1">
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">WinRiders field</span>
-                    <select
-                      value={field.as}
-                      disabled={locked}
-                      onChange={(e) =>
-                        patchWr({ fields: wr.fields.map((f, j) => (j === i ? { ...f, as: e.target.value } : f)) })
-                      }
-                      className="rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-800 disabled:bg-neutral-50 disabled:text-neutral-500 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-100"
-                    >
-                      {settings.wrTargetFields.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <Select
+                    label="WinRiders field"
+                    value={field.as}
+                    options={settings.wrTargetFields}
+                    disabled={locked}
+                    onChange={(v) => patchWr({ fields: wr.fields.map((f, j) => (j === i ? { ...f, as: v } : f)) })}
+                  />
                 </div>
                 <div className="flex-1">
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Our value</span>
-                    <select
-                      value={field.from}
-                      disabled={locked}
-                      onChange={(e) =>
-                        patchWr({ fields: wr.fields.map((f, j) => (j === i ? { ...f, from: e.target.value } : f)) })
-                      }
-                      className="rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-800 disabled:bg-neutral-50 disabled:text-neutral-500 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-100"
-                    >
-                      {settings.wrSourceFields.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <Select
+                    label="Our value"
+                    value={field.from}
+                    options={settings.wrSourceFields}
+                    disabled={locked}
+                    onChange={(v) => patchWr({ fields: wr.fields.map((f, j) => (j === i ? { ...f, from: v } : f)) })}
+                  />
                 </div>
                 {locked ? (
                   <span className="mb-3 text-xs font-semibold text-neutral-400">locked</span>
@@ -262,22 +243,12 @@ export function SettingsDialog({
                 />
               </div>
               <div className="flex-1">
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Our value</span>
-                  <select
-                    value={field.from}
-                    onChange={(e) =>
-                      patch({ fields: draft.fields.map((f, j) => (j === i ? { ...f, from: e.target.value } : f)) })
-                    }
-                    className="rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-800 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-100"
-                  >
-                    {settings.sourceFields.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <Select
+                  label="Our value"
+                  value={field.from}
+                  options={settings.sourceFields}
+                  onChange={(v) => patch({ fields: draft.fields.map((f, j) => (j === i ? { ...f, from: v } : f)) })}
+                />
               </div>
               <button
                 onClick={() => patch({ fields: draft.fields.filter((_, j) => j !== i) })}

@@ -123,7 +123,8 @@ const DEFAULT_WR: StoredWrConfig = {
 export function getWrConfig(): StoredWrConfig {
   const raw = getSetting(WR_KEY);
   if (raw) return { ...DEFAULT_WR, ...(JSON.parse(raw) as Partial<StoredWrConfig>) };
-  return {
+
+  const seeded: StoredWrConfig = {
     ...DEFAULT_WR,
     baseUrl: config.winriders.baseUrl ?? "",
     slug: config.winriders.slug ?? "",
@@ -132,6 +133,11 @@ export function getWrConfig(): StoredWrConfig {
     eventType: config.winriders.eventType,
     ...(config.winriders.cohort ? { cohort: config.winriders.cohort } : {}),
   };
+
+  if (seeded.baseUrl || seeded.slug || seeded.apiKey) {
+    setSetting(WR_KEY, JSON.stringify(seeded));
+  }
+  return seeded;
 }
 
 export function saveWrConfig(input: unknown): WrConfig {

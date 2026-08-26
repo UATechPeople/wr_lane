@@ -11,6 +11,8 @@ const { buildBody, crmConfigSchema, DEFAULT_CRM_CONFIG } = await import("./webho
 const { backoffSeconds } = await import("./outbox");
 const { outboxEnqueue, outboxClaim, outboxMarkDelivered, insertNumbers, uploadIdByLabel, getByToken } = await import("./db");
 const { normalizeUserId } = await import("./hooks");
+const { getWrConfig, saveWrConfig } = await import("./webhook");
+const { getSetting } = await import("./db");
 const { looksLikeToken, encryptPhone } = await import("./fpe");
 const { pushRecords } = await import("./winriders");
 const { wrConfigSchema, DEFAULT_WR_FIELDS } = await import("./webhook");
@@ -303,5 +305,30 @@ describe("winriders mapping guard", () => {
     const parsed = wrConfigSchema.parse({ ...base, fields: DEFAULT_WR_FIELDS });
     expect(parsed.fields).toEqual(DEFAULT_WR_FIELDS);
     expect(DEFAULT_WR_FIELDS.filter((f) => f.as === "external_id" || f.as === "phone_e164").every((f) => f.from === "token")).toBe(true);
+  });
+});
+
+describe("winriders connection seeding", () => {
+  test("the first read persists the env values so later env edits are ignored", () => {
+    const first = getWrConfig();
+    expect(getSetting("wr_connection")).not.toBeNull();
+
+    const stored = JSON.parse(getSetting("wr_connection") as string) as { slug: string };
+    expect(stored.slug).toBe(first.slug);
+  });
+
+  test("what the operator saves wins over anything the env says", () => {
+    saveWrConfig({
+      baseUrl: "https://operator.example",
+      slug: "operator-slug",
+      apiKey: "operator-key",
+      playerSegment: "operator-segment",
+      fields: [
+        { as: "external_id", from: "token" },
+        { as: "phone_e164", from: "token" },
+      ],
+    });
+    expect(getWrConfig().slug).toBe("operator-slug");
+    expect(getWrConfig().playerSegment).toBe("operator-segment");
   });
 });
