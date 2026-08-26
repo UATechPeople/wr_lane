@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, invertMap, type Preview, type Row, type Upload } from "./api";
+import { api, invertMap, type CrmConfig, type Preview, type Row, type Settings, type Transcript, type Upload, type WrConfig } from "./api";
 import type { ToastData, ToastTone } from "../components/Toast";
 
 const PAGE_SIZE = 25;
@@ -23,6 +23,13 @@ export function useCabinet() {
 
   const [editing, setEditing] = useState<Row | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [transcriptRow, setTranscriptRow] = useState<Row | null>(null);
+  const [transcript, setTranscript] = useState<Transcript | null>(null);
+  const [transcriptBusy, setTranscriptBusy] = useState(false);
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const grandTotal = uploads.reduce((a, u) => a + u.count, 0);
@@ -180,6 +187,69 @@ export function useCabinet() {
     });
   }
 
+  async function openTranscript(row: Row) {
+    setTranscriptRow(row);
+    setTranscript(null);
+    setTranscriptBusy(true);
+    setTranscript(await api.transcript(row.id));
+    setTranscriptBusy(false);
+  }
+
+  async function openSettings() {
+    setSettingsOpen(true);
+    setSettings(await api.settings());
+  }
+
+  async function openDocs() {
+    if (!settings) setSettings(await api.settings());
+    setDocsOpen(true);
+  }
+
+  async function saveCrm(crm: CrmConfig) {
+    setBusy(true);
+    const res = await api.saveCrm(crm);
+    setBusy(false);
+    if (res.error) {
+      notify(res.error, "error");
+      return;
+    }
+    setSettings(await api.settings());
+    notify("Settings saved");
+    setSettingsOpen(false);
+  }
+
+  async function saveWr(wr: WrConfig) {
+    setBusy(true);
+    const res = await api.saveWr(wr);
+    setBusy(false);
+    if (res.error) {
+      notify(res.error, "error");
+      return;
+    }
+    setSettings(await api.settings());
+    notify("Platform connection saved");
+  }
+
+  async function rotateKey(which: "inbound" | "core") {
+    setBusy(true);
+    await api.rotateKey(which);
+    setSettings(await api.settings());
+    setBusy(false);
+    notify("New key generated");
+  }
+
+  async function resend(row: Row) {
+    setBusy(true);
+    const res = await api.resend(row.id);
+    setBusy(false);
+    if (res.error) {
+      notify(res.error, "error");
+      return;
+    }
+    await refresh();
+    notify("Queued for delivery");
+  }
+
   return {
     rows, total, grandTotal, pages, pageSize: PAGE_SIZE, page, search, busy, toast,
     uploads, selectedUpload,
@@ -190,5 +260,8 @@ export function useCabinet() {
     openEdit: setEditing, closeEdit: () => setEditing(null), saveEdit,
     askDeleteContact, askDeleteUpload, closeConfirm: () => setConfirm(null), runConfirm,
     dismissToast: () => setToast(null),
+    settings, settingsOpen, openSettings, docsOpen, openDocs, closeDocs: () => setDocsOpen(false), closeSettings: () => setSettingsOpen(false),
+    saveCrm, saveWr, rotateKey, testCrm: api.testCrm, resend,
+    transcriptRow, transcript, transcriptBusy, openTranscript, closeTranscript: () => setTranscriptRow(null),
   };
 }

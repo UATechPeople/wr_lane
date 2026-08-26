@@ -2,10 +2,68 @@ export type Row = {
   id: number;
   real: string;
   token: string;
+  user_id: string | null;
   external_id: string | null;
   first_name: string | null;
   segment: string | null;
   pushed_at: string | null;
+  outcome: string | null;
+  result: string | null;
+  delivery_status: string | null;
+  delivery_error: string | null;
+};
+
+export type TranscriptCall = {
+  id: string;
+  status: string | null;
+  provider: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  transcript: string | null;
+  summary: string | null;
+  recordingUrl: string | null;
+};
+
+export type Transcript = { available: boolean; calls: TranscriptCall[]; error?: string; leadId?: string };
+
+export type CrmField = { as: string; from: string };
+
+export type CrmConfig = {
+  url: string;
+  headers: Record<string, string>;
+  fields: CrmField[];
+  timeoutMs: number;
+};
+
+export type WrField = { as: string; from: string };
+
+export type WrConfig = {
+  baseUrl: string;
+  slug: string;
+  apiKey: string;
+  playerSegment: string;
+  eventType: string;
+  cohort?: string;
+  fields: WrField[];
+};
+
+export type Settings = {
+  crm: CrmConfig;
+  wr: WrConfig;
+  inboundKey: string | null;
+  coreKey: string | null;
+  sourceFields: string[];
+  wrTargetFields: string[];
+  wrSourceFields: string[];
+  tokenOnlyTargets: string[];
+  defaults: CrmConfig;
+};
+
+export type TestResult = {
+  sent?: Record<string, unknown>;
+  response?: { ok: boolean; status: number; error?: string };
+  error?: string;
 };
 
 export type Upload = { id: number; label: string; created_at: string; count: number };
@@ -84,6 +142,26 @@ export const api = {
       body: JSON.stringify({ numbers }),
     }).then(json),
   push: (): Promise<PushResult> => fetch("/api/push", { method: "POST" }).then(json),
+  transcript: (id: number): Promise<Transcript> => fetch(`/api/numbers/${id}/transcript`).then(json),
+  settings: (): Promise<Settings> => fetch("/api/settings").then(json),
+  saveCrm: (crm: CrmConfig): Promise<{ crm?: CrmConfig; error?: string }> =>
+    fetch("/api/settings/crm", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(crm),
+    }).then(json),
+  saveWr: (wr: WrConfig): Promise<{ wr?: WrConfig; error?: string }> =>
+    fetch("/api/settings/wr", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(wr),
+    }).then(json),
+  rotateKey: (which: "inbound" | "core"): Promise<{ key: string }> =>
+    fetch(`/api/settings/keys/${which}`, { method: "POST" }).then(json),
+  testCrm: (): Promise<TestResult> => fetch("/api/settings/test", { method: "POST" }).then(json),
+  resend: (id: number): Promise<{ queued?: boolean; error?: string }> =>
+    fetch(`/api/numbers/${id}/resend`, { method: "POST" }).then(json),
+
   patch: (id: number, body: Record<string, string>): Promise<Row & { error?: string }> =>
     fetch(`/api/numbers/${id}`, {
       method: "PATCH",
