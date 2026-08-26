@@ -1,0 +1,59 @@
+# Hidden Numbers — client self-host. Pull-only: images come from our registry,
+# there is no source code here. Run ./up.sh (it logs in, pulls, and starts).
+services:
+  cabinet:
+    image: ghcr.io/uatechpeople/wr_lane-cabinet:latest
+    platform: linux/amd64
+    ports:
+      - "3500:3500"
+    environment:
+      PORT: 3500
+      FF3_KEY: ${FF3_KEY:-}
+      FF3_TWEAK: ${FF3_TWEAK:-D8E7920AFA330A73}
+      ROUTE_DIGIT: ${ROUTE_DIGIT:-9}
+      DECRYPT_KEY: ${DECRYPT_KEY:-}
+      CABINET_USER: ${CABINET_USER:-admin}
+      CABINET_PASSWORD: ${CABINET_PASSWORD:-}
+      INTERNAL_HOST: 0.0.0.0
+      INTERNAL_PORT: 3501
+      CLIENT_PREFIX: ${CLIENT_PREFIX:?set CLIENT_PREFIX in .env}
+      WR_PUSH_ENABLED: ${WR_PUSH_ENABLED:-false}
+      WR_BASE_URL: ${WR_BASE_URL:-}
+      WR_SLUG: ${WR_SLUG:-}
+      WR_API_KEY: ${WR_API_KEY:-}
+      WR_PLAYER_SEGMENT: ${WR_PLAYER_SEGMENT:-hidden_base}
+      DB_PATH: /data/cabinet.sqlite
+    volumes:
+      - cabinet-data:/data
+    restart: unless-stopped
+
+  kamailio:
+    image: ghcr.io/uatechpeople/wr_lane-kamailio:latest
+    platform: linux/amd64
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+    environment:
+      MY_PUBLIC_IP: ${MY_PUBLIC_IP:-}
+      DECRYPT_KEY: ${DECRYPT_KEY:-}
+      WEBHOOK_KEY: ${WEBHOOK_KEY:?set WEBHOOK_KEY in .env}
+      DB_URL: ${DB_URL:-sqlite:///var/lib/kamailio/kamailio.db}
+      DETOKEN_URL: ${DETOKEN_URL:-http://cabinet:3501/detokenize}
+      ELEVEN_LAB_PROTON_TOKEN: ${ELEVEN_LAB_PROTON_TOKEN:-placeholder}
+      ELEVEN_LAB_MMD_TOKEN: ${ELEVEN_LAB_MMD_TOKEN:?set ELEVEN_LAB_MMD_TOKEN in .env}
+      ELEVEN_LAB_DIDGLOBAL_TOKEN: ${ELEVEN_LAB_DIDGLOBAL_TOKEN:-placeholder}
+      PROTON_GW_IP: ${PROTON_GW_IP:-127.0.0.1}
+      PROTON_GW_PORT: ${PROTON_GW_PORT:-5060}
+      PROTON_TECH_PREFIX: ${PROTON_TECH_PREFIX:-}
+      MMD_GW_IP: ${MMD_GW_IP:-}
+      MMD_GW_PORT: ${MMD_GW_PORT:-5060}
+      MMD_AUTH_USER: ${MMD_AUTH_USER:-}
+      MMD_AUTH_PASS: ${MMD_AUTH_PASS:-}
+      DIDGLOBAL_GW_IP: ${DIDGLOBAL_GW_IP:-127.0.0.1}
+      DIDGLOBAL_GW_PORT: ${DIDGLOBAL_GW_PORT:-5060}
+    depends_on:
+      - cabinet
+    restart: unless-stopped
+
+volumes:
+  cabinet-data:
