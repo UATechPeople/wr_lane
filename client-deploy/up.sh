@@ -28,10 +28,10 @@ if [ -f legacy-names.map ]; then
   done < legacy-names.map
   if [ "$RENAMED" -gt 0 ]; then
     echo "==> renamed $RENAMED settings to the current names (backup: $BACKUP)"
-    rm -f legacy-names.map
   else
     rm -f "$BACKUP"
   fi
+  rm -f legacy-names.map
 fi
 
 # Updates may introduce settings that an existing .env does not have yet. Add the
