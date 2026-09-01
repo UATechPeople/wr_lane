@@ -32,6 +32,7 @@ db.run(`
 
 const ADDED_NUMBER_COLUMNS: Record<string, string> = {
   user_id: "TEXT",
+  webhook_id: "TEXT",
   outcome: "TEXT",
   result: "TEXT",
   call_attempts: "INTEGER",
@@ -69,12 +70,20 @@ db.run(`
 `);
 db.run("CREATE INDEX IF NOT EXISTS outbox_pending ON outbox (delivered_at, next_try_at)");
 
+const ADDED_OUTBOX_COLUMNS: Record<string, string> = { url: "TEXT" };
+
+const presentOutboxColumns = new Set((db.query("PRAGMA table_info(outbox)").all() as { name: string }[]).map((c) => c.name));
+for (const [name, type] of Object.entries(ADDED_OUTBOX_COLUMNS)) {
+  if (!presentOutboxColumns.has(name)) db.run(`ALTER TABLE outbox ADD COLUMN ${name} ${type}`);
+}
+
 export type NumberRow = {
   id: number;
   upload_id: number | null;
   real: string;
   token: string;
   user_id: string | null;
+  webhook_id: string | null;
   external_id: string | null;
   first_name: string | null;
   last_name: string | null;
@@ -97,6 +106,7 @@ export type NewNumber = {
   real: string;
   token: string;
   user_id?: string;
+  webhook_id?: string;
   external_id?: string;
   first_name?: string;
   last_name?: string;
@@ -109,7 +119,7 @@ export type NewNumber = {
 export type UploadRow = { id: number; label: string; created_at: string; count: number };
 
 const COLS =
-  "id, upload_id, real, token, user_id, external_id, first_name, last_name, country, language, segment, cohort, created_at, pushed_at, outcome, result, call_attempts, result_at, delivery_status, delivered_at, delivery_error";
+  "id, upload_id, real, token, user_id, webhook_id, external_id, first_name, last_name, country, language, segment, cohort, created_at, pushed_at, outcome, result, call_attempts, result_at, delivery_status, delivered_at, delivery_error";
 
 // ── uploads ──────────────────────────────────────────────────────────────────
 
@@ -153,9 +163,11 @@ export function rowsForUpload(id: number): NumberRow[] {
 export function insertNumbers(uploadId: number, rows: NewNumber[]): void {
   const stmt = db.prepare(
     `INSERT INTO numbers
-       (upload_id, real, token, user_id, external_id, first_name, last_name, country, language, segment, cohort)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(real) DO UPDATE SET user_id = COALESCE(excluded.user_id, numbers.user_id)`,
+       (upload_id, real, token, user_id, webhook_id, external_id, first_name, last_name, country, language, segment, cohort)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(real) DO UPDATE SET
+       user_id = COALESCE(excluded.user_id, numbers.user_id),
+       webhook_id = COALESCE(excluded.webhook_id, numbers.webhook_id)`,
   );
   const tx = db.transaction((items: NewNumber[]) => {
     for (const r of items) {
@@ -164,6 +176,7 @@ export function insertNumbers(uploadId: number, rows: NewNumber[]): void {
         r.real,
         r.token,
         r.user_id ?? null,
+        r.webhook_id ?? null,
         r.external_id ?? null,
         r.first_name ?? null,
         r.last_name ?? null,
@@ -308,6 +321,7 @@ export type OutboxRow = {
   number_id: number;
   dedupe_key: string;
   payload: string;
+  url: string | null;
   attempts: number;
   next_try_at: string;
   last_error: string | null;
@@ -315,13 +329,13 @@ export type OutboxRow = {
   created_at: string;
 };
 
-const OUTBOX_COLS = "id, number_id, dedupe_key, payload, attempts, next_try_at, last_error, delivered_at, created_at";
+const OUTBOX_COLS = "id, number_id, dedupe_key, payload, url, attempts, next_try_at, last_error, delivered_at, created_at";
 
-export function outboxEnqueue(numberId: number, dedupeKey: string, payload: unknown): boolean {
+export function outboxEnqueue(numberId: number, dedupeKey: string, payload: unknown, url?: string | null): boolean {
   return (
     db
-      .prepare("INSERT OR IGNORE INTO outbox (number_id, dedupe_key, payload) VALUES (?, ?, ?)")
-      .run(numberId, dedupeKey, JSON.stringify(payload)).changes > 0
+      .prepare("INSERT OR IGNORE INTO outbox (number_id, dedupe_key, payload, url) VALUES (?, ?, ?, ?)")
+      .run(numberId, dedupeKey, JSON.stringify(payload), url ?? null).changes > 0
   );
 }
 

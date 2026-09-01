@@ -30,6 +30,7 @@ export type Transcript = { available: boolean; calls: TranscriptCall[]; error?: 
 export type CrmField = { as: string; from: string };
 
 export type CrmConfig = {
+  urlTemplate: string;
   url: string;
   headers: Record<string, string>;
   fields: CrmField[];
@@ -108,10 +109,12 @@ async function postFile<T>(url: string, file: File, headerMap?: Record<string, s
   return fetch(url, { method: "POST", body: fd }).then((r) => r.json());
 }
 
+export type BuildInfo = { version: string; commit: string | null; builtAt: string | null };
+
 const json = (r: Response) => r.json();
 
 export const api = {
-  me: (): Promise<{ user: string; pushEnabled: boolean }> =>
+  me: (): Promise<{ user: string; pushEnabled: boolean; build?: BuildInfo }> =>
     fetch("/api/me").then((r) => {
       if (!r.ok) throw new Error("unauthenticated");
       return r.json();

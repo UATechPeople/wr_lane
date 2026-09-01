@@ -11,7 +11,7 @@ import {
   type NewNumber,
   type NumberRow,
 } from "./db";
-import { buildBody, getCrmConfig, getCoreKey, getInboundKey, type ResultFacts } from "./webhook";
+import { buildBody, getCrmConfig, getCoreKey, getInboundKey, isWebhookId, resolveCrmUrl, type ResultFacts } from "./webhook";
 import { resultForOutcome } from "./status";
 import { pushRecords } from "./winriders";
 
@@ -72,63 +72,84 @@ function toList(body: PlayerInput | PlayerInput[]): PlayerInput[] {
   return [body];
 }
 
+type PlayersContext = {
+  body: PlayerInput | PlayerInput[];
+  headers: Record<string, string | undefined>;
+  set: { status?: number };
+};
+
+async function acceptPlayers({ body, headers, set }: PlayersContext, webhookId: string | null) {
+  const allowed = guard(headers, getInboundKey());
+  if (!allowed.ok) {
+    set.status = allowed.status;
+    return allowed.body;
+  }
+
+  const inputs = toList(body);
+  if (inputs.length === 0) {
+    set.status = 422;
+    return { error: "no records" };
+  }
+
+  const accepted: NewNumber[] = [];
+  const rows: AcceptedRow[] = inputs.map((input) => {
+    const userId = normalizeUserId(input.user_id);
+    if (looksLikeToken(input.phone)) {
+      return { phone: input.phone, token: null, ok: false, error: "this is already a token, send the real phone number" };
+    }
+    try {
+      const token = encryptPhone(input.phone);
+      accepted.push({
+        real: input.phone,
+        token,
+        user_id: userId.value,
+        webhook_id: webhookId ?? undefined,
+        first_name: input.first_name,
+        last_name: input.last_name,
+        country: input.country,
+        language: input.language,
+        segment: input.segment,
+        cohort: input.cohort,
+      });
+      return { phone: input.phone, token, ok: true, ...(userId.warning ? { warning: userId.warning } : {}) };
+    } catch (e) {
+      return { phone: input.phone, token: null, ok: false, error: (e as Error).message };
+    }
+  });
+
+  if (accepted.length > 0) insertNumbers(uploadIdByLabel(STREAM_LABEL), accepted);
+
+  let pushed: { sent: number; failed: number; error?: string } | null = null;
+  if (accepted.length > 0) {
+    const stored = accepted.map((r) => getByToken(r.token)).filter((r): r is NumberRow => r !== null);
+    try {
+      const results = await pushRecords(stored);
+      markPushed(results.filter((r) => r.ok).map((r) => r.token));
+      pushed = { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
+    } catch (e) {
+      pushed = { sent: 0, failed: stored.length, error: (e as Error).message };
+    }
+  }
+
+  set.status = 202;
+  return { received: rows.length, accepted: accepted.length, pushed, rows };
+}
+
 export const hooks = new Elysia({ prefix: "/hook" })
   .post(
     "/players",
-    async ({ body, headers, set }) => {
-      const allowed = guard(headers, getInboundKey());
-      if (!allowed.ok) {
-        set.status = allowed.status;
-        return allowed.body;
-      }
-
-      const inputs = toList(body as PlayerInput | PlayerInput[]);
-      if (inputs.length === 0) {
+    async (ctx) => acceptPlayers(ctx as PlayersContext, null),
+    { body: t.Union([playerSchema, t.Array(playerSchema)]) },
+  )
+  .post(
+    "/players/:webhookId",
+    async (ctx) => {
+      const { params, set } = ctx as PlayersContext & { params: { webhookId: string } };
+      if (!isWebhookId(params.webhookId)) {
         set.status = 422;
-        return { error: "no records" };
+        return { error: "webhook id may only contain letters, digits, dashes and underscores" };
       }
-
-      const accepted: NewNumber[] = [];
-      const rows: AcceptedRow[] = inputs.map((input) => {
-        const userId = normalizeUserId(input.user_id);
-        if (looksLikeToken(input.phone)) {
-          return { phone: input.phone, token: null, ok: false, error: "this is already a token, send the real phone number" };
-        }
-        try {
-          const token = encryptPhone(input.phone);
-          accepted.push({
-            real: input.phone,
-            token,
-            user_id: userId.value,
-            first_name: input.first_name,
-            last_name: input.last_name,
-            country: input.country,
-            language: input.language,
-            segment: input.segment,
-            cohort: input.cohort,
-          });
-          return { phone: input.phone, token, ok: true, ...(userId.warning ? { warning: userId.warning } : {}) };
-        } catch (e) {
-          return { phone: input.phone, token: null, ok: false, error: (e as Error).message };
-        }
-      });
-
-      if (accepted.length > 0) insertNumbers(uploadIdByLabel(STREAM_LABEL), accepted);
-
-      let pushed: { sent: number; failed: number; error?: string } | null = null;
-      if (accepted.length > 0) {
-        const stored = accepted.map((r) => getByToken(r.token)).filter((r): r is NumberRow => r !== null);
-        try {
-          const results = await pushRecords(stored);
-          markPushed(results.filter((r) => r.ok).map((r) => r.token));
-          pushed = { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
-        } catch (e) {
-          pushed = { sent: 0, failed: stored.length, error: (e as Error).message };
-        }
-      }
-
-      set.status = 202;
-      return { received: rows.length, accepted: accepted.length, pushed, rows };
+      return acceptPlayers(ctx as PlayersContext, params.webhookId);
     },
     { body: t.Union([playerSchema, t.Array(playerSchema)]) },
   )
@@ -205,8 +226,9 @@ export const hooks = new Elysia({ prefix: "/hook" })
         sent_at: payload.sentAt ?? null,
       };
 
+      const crm = getCrmConfig();
       const dedupeKey = [payload.campaignId, payload.leadId, payload.event, payload.outcome, attempts].join(":");
-      const queued = outboxEnqueue(row.id, dedupeKey, buildBody(getCrmConfig(), facts));
+      const queued = outboxEnqueue(row.id, dedupeKey, buildBody(crm, facts), resolveCrmUrl(crm, row.webhook_id));
 
       return { received: true, matched: true, queued };
     },
