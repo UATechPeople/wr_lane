@@ -16,32 +16,6 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# Installs made before the trunk settings were renamed ship a rename map next to
-# this script. It is absent on fresh installs and can be deleted once applied.
-if [ -f legacy-names.map ]; then
-  RENAMED=0
-  BACKUP=".env.backup.$(date +%Y%m%d%H%M%S)"
-  cp .env "$BACKUP"
-  while IFS=: read -r OLD NEW; do
-    [ -z "${OLD:-}" ] && continue
-    case "$OLD" in \#*) continue ;; esac
-    grep -q "^[[:space:]]*${OLD}=" .env || continue
-    if grep -q "^[[:space:]]*${NEW}=" .env; then
-      sed -i.tmp "/^[[:space:]]*${OLD}=/d" .env
-    else
-      sed -i.tmp "s/^[[:space:]]*${OLD}=/${NEW}=/" .env
-    fi
-    rm -f .env.tmp
-    RENAMED=$((RENAMED + 1))
-  done < legacy-names.map
-  if [ "$RENAMED" -gt 0 ]; then
-    echo "==> renamed $RENAMED settings to the current names (backup: $BACKUP)"
-  else
-    rm -f "$BACKUP"
-  fi
-  rm -f legacy-names.map
-fi
-
 # Updates may introduce settings that an existing .env does not have yet. Add the
 # missing ones with their defaults; values already present are never touched.
 if [ -f env.defaults ]; then

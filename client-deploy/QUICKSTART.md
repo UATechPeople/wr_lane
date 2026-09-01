@@ -11,18 +11,36 @@ encryption keys stay entirely on this server; WinRiders only ever receives token
   and **no registry/token** — the ready-made images are **bundled inside the archive** and
   loaded locally.
 
-## Deploy (one command)
+## Deploy
 
 ```bash
-unzip hidden-numbers.zip -d hidden-numbers && cd hidden-numbers
-./up.sh
+unzip hidden-numbers.zip -d hidden-numbers && cd hidden-numbers/hidden-numbers-client
+./up.sh          # creates .env from the template and stops
+nano .env        # fill in CLIENT_PREFIX and your SIP-trunk details
+./up.sh          # second run loads the images and starts everything
 ```
 
-`up.sh` loads the bundled images and starts everything. `.env` is pre-filled; your server's
-public IP is auto-detected.
+Your server's public IP is auto-detected. The encryption keys are generated once into
+`keys.env` — back that file up, without it existing tokens cannot be decrypted.
 
-- **Cabinet UI:** `http://<your-server-ip>:3500` (login: `admin` / `CABINET_PASSWORD` in `.env`)
+- **Cabinet UI:** `http://<your-server-ip>:3500` (login `admin`, password `CABINET_PASSWORD` in `keys.env`)
 - **SIP proxy:** UDP/TCP 5060
+- **Version check:** `curl http://<your-server-ip>:3500/version`
+
+## Send us players from your CRM
+
+```bash
+curl -X POST http://<your-server-ip>:3500/hook/players \
+  -H "Authorization: Bearer <key from Settings → For your CRM → cabinet>" \
+  -H "Content-Type: application/json" \
+  -d '{ "phone": "+380958145553", "user_id": "12345" }'
+```
+
+Only `phone` is required; an array works too. If results must return to different
+campaigns of your CRM, add that campaign's webhook id to the address —
+`/hook/players/<webhook id>` — and set the address template once in
+Settings → Your CRM endpoint. The full reference lives behind the **Docs** button in the
+cabinet.
 
 ## Load your numbers
 
@@ -46,20 +64,38 @@ forward your domain to `http://127.0.0.1:3500`.)
 
 ## Hand back to WinRiders
 
-Send us your server's **public IP** — everything else (calling, carrier routing, the AI
-agent) is configured on our side.
+Send us:
+
+- your server's **public IP**;
+- the **"For WinRiders → cabinet" key** — Settings → Inbound keys → Generate. We use it to
+  post call results back to you.
+
+Everything else (calling, carrier routing, the AI agent) is configured on our side.
 
 ## Operations
 
 ```bash
 docker compose ps        # status
 docker compose logs -f   # logs
-./up.sh                  # restart (reloads the bundled images)
-docker compose down      # stop
+./up.sh                  # start / restart (encryption keys are never regenerated)
+./down.sh                # stop (data is kept)
 ```
+
+## Updating
+
+```bash
+cd ..                    # the folder holding hidden-numbers-client
+unzip -o hidden-numbers.zip
+cd hidden-numbers-client && ./up.sh
+curl http://localhost:3500/version
+```
+
+The archive carries `.env.example`, never a live `.env`, so your settings, keys and stored
+numbers survive an update untouched.
 
 ## Notes
 
-- Keep `.env` private — it holds your encryption keys.
-- To enable outbound calling, fill your SIP-trunk creds in `.env`
-  (`TRUNK_DIGEST_HOST` / `TRUNK_DIGEST_PORT` / `TRUNK_DIGEST_USER` / `TRUNK_DIGEST_PASS`) and re-run `./up.sh`.
+- Keep `keys.env` private and backed up — it holds your encryption keys.
+- To enable outbound calling, fill **one** trunk block in `.env` and re-run `./up.sh`:
+  `TRUNK_DIGEST_*` if your carrier authenticates by login and password,
+  `TRUNK_IPAUTH_*` if it authorises your server's IP instead.
