@@ -3,10 +3,10 @@ import type { CrmConfig } from "./webhook";
 
 export type DeliveryOutcome = { ok: boolean; status: number; error?: string };
 
-export async function sendToCrm(config: CrmConfig, body: unknown): Promise<DeliveryOutcome> {
-  if (!config.url) return { ok: false, status: 0, error: "crm url is not configured" };
+export async function sendToCrm(config: CrmConfig, body: unknown, url = config.url): Promise<DeliveryOutcome> {
+  if (!url) return { ok: false, status: 0, error: "crm url is not configured" };
   try {
-    const response = await axios.post(config.url, body, {
+    const response = await axios.post(url, body, {
       headers: { "content-type": "application/json", ...config.headers },
       timeout: config.timeoutMs,
       validateStatus: () => true,

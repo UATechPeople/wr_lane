@@ -188,9 +188,16 @@ export function SettingsDialog({
           <Input
             label="URL"
             value={draft.url}
-            hint="Leave empty to stop sending. Results keep queueing and go out once a url is set."
+            hint="Used when a record carries no webhook id. Leave empty to stop sending — results keep queueing."
             placeholder="https://crm.example.com/hooks/call-result"
             onChange={(e) => patch({ url: e.target.value })}
+          />
+          <Input
+            label="URL template"
+            value={draft.urlTemplate}
+            hint="Send players to /hook/players/<webhook id> and the result goes to this address with {id} replaced."
+            placeholder="https://crm.example.com/hooks/{id}"
+            onChange={(e) => patch({ urlTemplate: e.target.value })}
           />
         </section>
 

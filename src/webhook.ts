@@ -22,8 +22,17 @@ const fieldSchema = z.object({
   from: z.enum(SOURCE_FIELDS),
 });
 
+export const WEBHOOK_ID_TOKEN = "{id}";
+
 export const crmConfigSchema = z.object({
   url: z.string().url().or(z.literal("")).default(""),
+  urlTemplate: z
+    .string()
+    .max(512)
+    .default("")
+    .refine((v) => v === "" || (v.includes(WEBHOOK_ID_TOKEN) && /^https?:\/\//.test(v)), {
+      message: `template must be a url containing ${WEBHOOK_ID_TOKEN}`,
+    }),
   headers: z.record(z.string().min(1).max(128), z.string().max(2048)).default({}),
   fields: z.array(fieldSchema).max(32).default([]),
   timeoutMs: z.number().int().positive().max(120_000).default(10_000),
@@ -33,6 +42,7 @@ export type CrmConfig = z.infer<typeof crmConfigSchema>;
 
 export const DEFAULT_CRM_CONFIG: CrmConfig = {
   url: "",
+  urlTemplate: "",
   headers: {},
   fields: [
     { as: "user", from: "phone" },
@@ -176,6 +186,19 @@ export type ResultFacts = {
   event: string | null;
   sent_at: string | null;
 };
+
+export const WEBHOOK_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isWebhookId(value: string | null | undefined): value is string {
+  return typeof value === "string" && WEBHOOK_ID_PATTERN.test(value);
+}
+
+export function resolveCrmUrl(config: CrmConfig, webhookId: string | null | undefined): string {
+  if (config.urlTemplate && isWebhookId(webhookId)) {
+    return config.urlTemplate.replaceAll(WEBHOOK_ID_TOKEN, webhookId);
+  }
+  return config.url;
+}
 
 export function buildBody(config: CrmConfig, facts: ResultFacts): Record<string, unknown> {
   const body: Record<string, unknown> = {};

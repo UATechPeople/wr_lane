@@ -13,14 +13,20 @@ export function backoffSeconds(attempts: number): number {
 
 export async function drainOutbox(limit = 25): Promise<{ delivered: number; failed: number; skipped: number }> {
   const config = getCrmConfig();
-  if (!config.url) return { delivered: 0, failed: 0, skipped: 0 };
+  if (!config.url && !config.urlTemplate) return { delivered: 0, failed: 0, skipped: 0 };
 
   const rows = outboxClaim(limit);
   let delivered = 0;
   let failed = 0;
+  let skipped = 0;
 
   for (const row of rows) {
-    const outcome = await sendToCrm(config, JSON.parse(row.payload));
+    const url = row.url ?? config.url;
+    if (!url) {
+      skipped += 1;
+      continue;
+    }
+    const outcome = await sendToCrm(config, JSON.parse(row.payload), url);
     if (outcome.ok) {
       outboxMarkDelivered(row.id);
       setDeliveryState(row.number_id, "delivered");
@@ -37,7 +43,7 @@ export async function drainOutbox(limit = 25): Promise<{ delivered: number; fail
     failed += 1;
   }
 
-  return { delivered, failed, skipped: 0 };
+  return { delivered, failed, skipped };
 }
 
 export function startOutboxCron(pattern = "*/30 * * * * *"): Cron {
