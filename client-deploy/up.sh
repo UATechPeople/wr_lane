@@ -6,7 +6,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-[ -f .env ] || { echo "ERROR: .env is missing next to this script." >&2; exit 1; }
+if [ ! -f .env ]; then
+  if [ -f .env.example ]; then
+    cp .env.example .env
+    echo "==> created .env from .env.example — fill it in, then run ./up.sh again"
+    exit 1
+  fi
+  echo "ERROR: .env is missing next to this script." >&2
+  exit 1
+fi
 
 # Installs made before the trunk settings were renamed ship a rename map next to
 # this script. It is absent on fresh installs and can be deleted once applied.
