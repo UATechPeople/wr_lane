@@ -12,8 +12,17 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { TranscriptDialog } from "./components/TranscriptDialog";
 import { DocsDialog } from "./components/DocsDialog";
 import { Toast } from "./components/Toast";
+import type { BuildInfo } from "./lib/api";
 
-export function Cabinet({ onLogout, pushEnabled }: { onLogout: () => void; pushEnabled: boolean }) {
+export function Cabinet({
+  onLogout,
+  pushEnabled,
+  build,
+}: {
+  onLogout: () => void;
+  pushEnabled: boolean;
+  build: BuildInfo | null;
+}) {
   const c = useCabinet();
 
   return (
@@ -26,6 +35,12 @@ export function Cabinet({ onLogout, pushEnabled }: { onLogout: () => void; pushE
               <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-sm font-semibold text-neutral-700">{c.grandTotal}</span>
             </div>
             <p className="mt-1 text-sm text-neutral-500">Real numbers stay here. Platform only ever sees tokens.</p>
+            {build && (
+              <p className="mt-1 font-mono text-xs text-neutral-400" title={build.builtAt ?? undefined}>
+                v{build.version}
+                {build.commit ? ` · ${build.commit.slice(0, 7)}` : ""}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <a

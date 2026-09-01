@@ -1,6 +1,6 @@
 {
   "name": "wr-hidden-numbers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Client-side cabinet: hold the real number base, ship only FF3-1 tokens to Platform, decrypt on egress. Elysia (Bun) API + React UI (pre-built with Bun.build + Tailwind, served from dist/).",
   "module": "src/index.ts",
   "type": "module",
