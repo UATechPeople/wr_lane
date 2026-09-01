@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, type BuildInfo } from "./api";
 
 export type AuthStatus = "checking" | "in" | "out";
 
@@ -8,12 +8,14 @@ export function useAuth() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
+  const [build, setBuild] = useState<BuildInfo | null>(null);
 
   useEffect(() => {
     api
       .me()
       .then((m) => {
         setPushEnabled(!!m.pushEnabled);
+        setBuild(m.build ?? null);
         setStatus("in");
       })
       .catch(() => setStatus("out"));
@@ -27,6 +29,7 @@ export function useAuth() {
       if (res.ok) {
         const m = await api.me().catch(() => null);
         setPushEnabled(!!m?.pushEnabled);
+        setBuild(m?.build ?? null);
         setStatus("in");
       } else {
         setError(res.error ?? "Invalid credentials");
@@ -41,5 +44,5 @@ export function useAuth() {
     setStatus("out");
   }
 
-  return { status, error, busy, pushEnabled, login, logout };
+  return { status, error, busy, pushEnabled, build, login, logout };
 }

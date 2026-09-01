@@ -21,6 +21,10 @@ RUN bun install --production
 COPY tsconfig.json ./
 COPY src ./src
 COPY --from=builder /app/dist ./dist
+ARG BUILD_COMMIT=""
+ARG BUILD_TIME=""
+ENV BUILD_COMMIT=$BUILD_COMMIT
+ENV BUILD_TIME=$BUILD_TIME
 ENV PORT=3500
 EXPOSE 3500
 CMD ["bun", "src/index.ts"]

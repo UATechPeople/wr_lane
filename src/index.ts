@@ -2,6 +2,7 @@ import { createHmac } from "crypto";
 import { Elysia, t } from "elysia";
 import { staticPlugin } from "@elysiajs/static";
 import { config } from "./config";
+import { buildInfo } from "./version";
 import { encryptPhone, decryptToken } from "./fpe";
 import {
   createUpload,
@@ -145,7 +146,7 @@ const api = new Elysia({ prefix: "/api" })
     set.headers["Set-Cookie"] = "cabinet_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     return { ok: true };
   })
-  .get("/me", () => ({ user: config.auth.user ?? "operator", pushEnabled: config.pushEnabled }))
+  .get("/me", () => ({ user: config.auth.user ?? "operator", pushEnabled: config.pushEnabled, build: buildInfo }))
   // Create from a JSON list of phones (paste box).
   .post("/numbers", ({ body }) => ingest(body.numbers.map((p) => ({ phone: p })), body.label?.trim() || "Pasted list"), {
     body: t.Object({ numbers: t.Array(t.String()), label: t.Optional(t.String()) }),
@@ -419,7 +420,8 @@ const api = new Elysia({ prefix: "/api" })
 // Pre-building runs the Tailwind plugin so utility classes are generated (the dev
 // fullstack server does this at runtime, but production bundling does not).
 const app = new Elysia()
-  .get("/health", () => ({ ok: true, count: countNumbers(), clientPrefix: config.clientPrefix ?? null }))
+  .get("/health", () => ({ ok: true, count: countNumbers(), clientPrefix: config.clientPrefix ?? null, build: buildInfo }))
+  .get("/version", () => buildInfo)
   .use(hooks)
   .use(api)
   .use(staticPlugin({ assets: "dist", prefix: "/", indexHTML: true }))
