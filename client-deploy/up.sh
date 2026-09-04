@@ -44,6 +44,10 @@ if [ -z "${MY_PUBLIC_IP:-}" ]; then
     || { echo "ERROR: could not auto-detect public IP — set MY_PUBLIC_IP in .env" >&2; exit 1; }
 fi
 
+# rtpengine advertises this address in SDP. Plain public IP by default; behind NAT
+# set RTPENGINE_INTERFACE=<private>!<public> in .env.
+RTPENGINE_INTERFACE="${RTPENGINE_INTERFACE:-$MY_PUBLIC_IP}"; export RTPENGINE_INTERFACE
+
 command -v docker >/dev/null || { echo "ERROR: Docker is not installed." >&2; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "ERROR: 'docker compose' not available." >&2; exit 1; }
 
@@ -66,5 +70,6 @@ echo
 echo "==> done."
 echo "   Cabinet UI:  http://${MY_PUBLIC_IP}:3500   (login: ${CABINET_USER:-admin} / ${CAB_PASS})"
 echo "   SIP proxy:   UDP/TCP 5060 (make sure the firewall allows it)"
+echo "   RTP media:   UDP ${RTP_PORT_MIN:-30000}-${RTP_PORT_MAX:-30500} (open these too, or calls connect without sound)"
 echo "   Stop:        ./down.sh        Status: docker compose ps"
 echo "   HTTPS:       sudo ./setup-caddy.sh <your-domain>   (optional)"

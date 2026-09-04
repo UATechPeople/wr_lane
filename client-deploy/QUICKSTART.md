@@ -24,6 +24,21 @@ docker compose logs -f                 # logs
 curl http://localhost:3500/version     # which version is running
 ```
 
+## Ports the firewall must allow
+
+| Port | Proto | What |
+|------|-------|------|
+| 5060 | UDP + TCP | SIP signalling |
+| 30000-30500 | UDP | voice (RTP). Without these a call connects and both sides hear silence |
+| 3500 | TCP | cabinet UI |
+
+If this server reaches the internet through NAT (its public IP is not listed by
+`ip -4 addr show`), set `RTPENGINE_INTERFACE=<private-ip>!<public-ip>` in `.env`,
+otherwise the wrong address is advertised and audio goes nowhere.
+
+The stack uses the Docker subnet `172.28.0.0/16`. If that range is already taken on
+this host, `docker compose` refuses to create the network — free it or tell WinRiders.
+
 Cabinet UI: `http://<your-server-ip>:3500` — login `admin`, password `CABINET_PASSWORD`
 from `keys.env`. Everything about sending players and receiving results is behind the
 **Docs** button inside the cabinet.

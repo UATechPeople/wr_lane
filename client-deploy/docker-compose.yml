@@ -53,9 +53,32 @@ services:
       TRUNK_DIGEST_PASS: ${TRUNK_DIGEST_PASS:-}
       TRUNK_DIRECT_HOST: ${TRUNK_DIRECT_HOST:-127.0.0.1}
       TRUNK_DIRECT_PORT: ${TRUNK_DIRECT_PORT:-5060}
+    entrypoint: ["/usr/bin/stdbuf", "-oL", "-eL", "/entrypoint.sh"]
     depends_on:
       - cabinet
+      - rtpengine
     restart: unless-stopped
+
+  rtpengine:
+    image: drachtio/rtpengine:latest
+    platform: linux/amd64
+    network_mode: host
+    command:
+      - rtpengine
+      - --interface=${RTPENGINE_INTERFACE}
+      - --listen-ng=172.28.0.1:22222
+      - --listen-http=172.28.0.1:8080
+      - --port-min=${RTP_PORT_MIN:-30000}
+      - --port-max=${RTP_PORT_MAX:-30500}
+      - --log-level=5
+    restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
 
 volumes:
   cabinet-data:
