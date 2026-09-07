@@ -1,4 +1,4 @@
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { Elysia, t } from "elysia";
 import { staticPlugin } from "@elysiajs/static";
 import { config } from "./config";
@@ -97,6 +97,14 @@ const SESSION_TTL_S = 7 * 24 * 3600;
 function sign(payload: string): string {
   return createHmac("sha256", config.sessionSecret).update(payload).digest("base64url");
 }
+function secretEquals(a: string | undefined | null, b: string | undefined | null): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
 function makeToken(): string {
   const payload = Buffer.from(`${config.auth.user}:${Date.now() + SESSION_TTL_S * 1000}`).toString("base64url");
   return `${payload}.${sign(payload)}`;
@@ -104,7 +112,7 @@ function makeToken(): string {
 function verifyToken(token?: string): boolean {
   if (!token) return false;
   const [payload, sig] = token.split(".");
-  if (!payload || !sig || sign(payload) !== sig) return false;
+  if (!payload || !sig || !secretEquals(sign(payload), sig)) return false;
   const [user, exp] = Buffer.from(payload, "base64url").toString().split(":");
   return user === config.auth.user && Number(exp) > Date.now();
 }
@@ -132,7 +140,7 @@ const api = new Elysia({ prefix: "/api" })
   .post(
     "/login",
     ({ body, set }) => {
-      const ok = !!config.auth.user && body.user === config.auth.user && body.pass === config.auth.pass;
+      const ok = !!config.auth.user && secretEquals(body.user, config.auth.user) && secretEquals(body.pass, config.auth.pass);
       if (!ok) {
         set.status = 401;
         return { ok: false, error: "Invalid credentials" };
@@ -169,7 +177,7 @@ const api = new Elysia({ prefix: "/api" })
         return { error: `could not parse file: ${String((e as Error).message)}` };
       }
     },
-    { body: t.Object({ file: t.File(), header_map: t.Optional(t.Any()) }) },
+    { body: t.Object({ file: t.File({ maxSize: "20m" }), header_map: t.Optional(t.Any()) }) },
   )
 
   // Preview a file (headers + auto-detected mapping + sample rows) WITHOUT storing —
@@ -184,7 +192,7 @@ const api = new Elysia({ prefix: "/api" })
         return { error: `could not parse file: ${String((e as Error).message)}` };
       }
     },
-    { body: t.Object({ file: t.File(), header_map: t.Optional(t.Any()) }) },
+    { body: t.Object({ file: t.File({ maxSize: "20m" }), header_map: t.Optional(t.Any()) }) },
   )
 
   // Paginated list. ?limit=&offset= (limit capped at 500).
@@ -441,7 +449,7 @@ Bun.serve({
   fetch(req) {
     const url = new URL(req.url);
     if (url.pathname !== "/detokenize") return new Response("not found", { status: 404 });
-    if (req.headers.get("x-decrypt-key") !== config.decryptKey) {
+    if (!secretEquals(req.headers.get("x-decrypt-key"), config.decryptKey)) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
     const raw = url.searchParams.get("t");
