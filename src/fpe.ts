@@ -49,6 +49,9 @@ export function decryptToken(token: string): string {
   const ciphertext = t.slice(1);
   const plaintext = cipher.decrypt(ciphertext);
   const len = Number(plaintext[0]) + MIN_LEN;
+  if (!Number.isInteger(len) || len < MIN_LEN || len > MAX_LEN) {
+    throw new Error("token does not belong to this cabinet");
+  }
   const body = plaintext.slice(1);
   const real = body.slice(BODY_WIDTH - len);
   return "+" + real;

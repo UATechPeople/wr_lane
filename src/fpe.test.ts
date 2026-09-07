@@ -43,3 +43,24 @@ describe("FF3 phone tokenization", () => {
     expect(() => encryptPhone("+123456789012345")).toThrow();
   });
 });
+
+describe("foreign tokens", () => {
+  test("a token that is not ours is rejected, never silently truncated", () => {
+    let dialable = 0;
+    let rejected = 0;
+    for (let i = 0; i < 500; i++) {
+      let candidate = "9";
+      for (let j = 0; j < 14; j++) candidate += Math.floor(Math.random() * 10);
+      try {
+        const digits = decryptToken(candidate).replace("+", "");
+        expect(digits.length).toBeGreaterThanOrEqual(8);
+        expect(digits.length).toBeLessThanOrEqual(13);
+        dialable += 1;
+      } catch {
+        rejected += 1;
+      }
+    }
+    expect(dialable + rejected).toBe(500);
+    expect(rejected).toBeGreaterThan(0);
+  });
+});
