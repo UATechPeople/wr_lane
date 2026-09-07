@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "crypto";
 import { Elysia, t } from "elysia";
 import { encryptPhone, looksLikeToken } from "./fpe";
 import {
@@ -27,7 +28,13 @@ type Guard = { ok: true } | { ok: false; status: number; body: { error: string }
 
 function guard(headers: Record<string, string | undefined>, expected: string | null): Guard {
   if (!expected) return { ok: false, status: 503, body: { error: "key is not configured in the cabinet" } };
-  if (presentedKey(headers) !== expected) return { ok: false, status: 401, body: { error: "unauthorized" } };
+  const presented = presentedKey(headers);
+  if (presented == null) return { ok: false, status: 401, body: { error: "unauthorized" } };
+  const left = Buffer.from(presented);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !timingSafeEqual(left, right)) {
+    return { ok: false, status: 401, body: { error: "unauthorized" } };
+  }
   return { ok: true };
 }
 
