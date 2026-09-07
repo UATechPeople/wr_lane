@@ -4,6 +4,9 @@ services:
   cabinet:
     image: ghcr.io/uatechpeople/wr_lane-cabinet:latest
     platform: linux/amd64
+    env_file:
+      - path: keys.env
+        required: false
     ports:
       - "3500:3500"
     environment:
@@ -32,13 +35,15 @@ services:
   kamailio:
     image: ghcr.io/uatechpeople/wr_lane-kamailio:latest
     platform: linux/amd64
+    env_file:
+      - path: keys.env
+        required: false
     ports:
       - "5060:5060/udp"
       - "5060:5060/tcp"
     environment:
       MY_PUBLIC_IP: ${MY_PUBLIC_IP:-}
       DECRYPT_KEY: ${DECRYPT_KEY:-}
-      WEBHOOK_KEY: ${WEBHOOK_KEY:?set WEBHOOK_KEY in .env}
       DB_URL: ${DB_URL:-sqlite:///var/lib/kamailio/kamailio.db}
       DETOKEN_URL: ${DETOKEN_URL:-http://cabinet:3501/detokenize}
       TRUNK_IPAUTH_API_KEY: ${TRUNK_IPAUTH_API_KEY:-placeholder}
