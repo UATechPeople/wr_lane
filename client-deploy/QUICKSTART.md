@@ -22,7 +22,12 @@ docker compose logs -f                 # logs
 ./up.sh                                # start / restart, keys are never regenerated
 ./down.sh                              # stop, data is kept
 curl http://localhost:3500/version     # which version is running
+./doctor.sh                            # what would stop the stack working
 ```
+
+`doctor.sh` is the first thing to run when something is off: it reports missing keys, a
+trunk branch without a gateway, a container that is down, an unreachable cabinet, and
+results stuck in the delivery queue. It only reads, never changes anything.
 
 ## Ports the firewall must allow
 
@@ -50,6 +55,7 @@ cd ..                                  # the folder holding hidden-numbers-clien
 unzip -o hidden-numbers.zip
 cd hidden-numbers-client && ./up.sh
 curl http://localhost:3500/version     # confirm the new version is up
+./doctor.sh                            # and that the stack is wired correctly
 ```
 
 The archive ships `.env.example`, never a live `.env`, so your settings, keys and stored
