@@ -35,7 +35,6 @@ services:
       environment:
         MY_PUBLIC_IP: ${MY_PUBLIC_IP:?set MY_PUBLIC_IP in .env}
         DECRYPT_KEY: ${DECRYPT_KEY:?set DECRYPT_KEY in .env}
-        WEBHOOK_KEY: ${WEBHOOK_KEY:?set WEBHOOK_KEY in .env}
         DB_URL: ${DB_URL:-sqlite:///var/lib/kamailio/kamailio.db}
         DETOKEN_URL: ${DETOKEN_URL:-http://cabinet:3501/detokenize}
         TRUNK_IPAUTH_API_KEY: ${TRUNK_IPAUTH_API_KEY:?set TRUNK_IPAUTH_API_KEY in .env}
