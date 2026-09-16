@@ -508,3 +508,20 @@ describe("legacy numbers keep receiving results", () => {
     expect(requestsForNumber(getByToken(token)!.id)).toHaveLength(0);
   });
 });
+
+describe("one token, one row, whatever the formatting", () => {
+  test("a number first stored without + is reused when it arrives in E.164", () => {
+    const suffix = String(Date.now()).slice(-7);
+    const bare = "38095" + suffix;
+    const e164 = "+" + bare;
+    const token = encryptPhone(e164);
+    expect(encryptPhone(bare)).toBe(token);
+    insertNumbers(uploadIdByLabel("csv"), [{ real: bare, token }]);
+    const before = getByToken(token)!;
+    insertNumbers(uploadIdByLabel("crm"), [{ real: e164, token, user_id: "u-1" }]);
+    const after = getByToken(token)!;
+    expect(after.id).toBe(before.id);
+    expect(after.real).toBe(e164);
+    expect(after.user_id).toBe("u-1");
+  });
+});
