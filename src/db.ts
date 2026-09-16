@@ -206,7 +206,8 @@ export function insertNumbers(uploadId: number, rows: NewNumber[]): void {
     `INSERT INTO numbers
        (upload_id, real, token, user_id, webhook_id, external_id, first_name, last_name, country, language, segment, cohort)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(real) DO UPDATE SET
+     ON CONFLICT(token) DO UPDATE SET
+       real = excluded.real,
        user_id = COALESCE(excluded.user_id, numbers.user_id),
        webhook_id = COALESCE(excluded.webhook_id, numbers.webhook_id)`,
   );
