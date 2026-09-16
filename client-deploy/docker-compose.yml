@@ -20,7 +20,6 @@ services:
       INTERNAL_HOST: 0.0.0.0
       INTERNAL_PORT: 3501
       CLIENT_PREFIX: ${CLIENT_PREFIX:?set CLIENT_PREFIX in .env}
-      WR_PUSH_ENABLED: ${WR_PUSH_ENABLED:-false}
       WR_BASE_URL: ${WR_BASE_URL:-}
       WR_SLUG: ${WR_SLUG:-}
       WR_API_KEY: ${WR_API_KEY:-}

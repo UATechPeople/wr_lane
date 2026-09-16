@@ -66,8 +66,10 @@ restarts=$(docker compose ps -q 2>/dev/null | xargs -r docker inspect -f '{{.Nam
 rtp_seen=$(docker compose logs kamailio 2>/dev/null | grep -cE "rtpengine instance .* found" || true)
 if [ "${rtp_seen:-0}" -gt 0 ]; then
   ok "kamailio sees rtpengine"
+elif [ -z "${RTPENGINE_INTERFACE:-}" ]; then
+  bad "RTPENGINE_INTERFACE is empty — rtpengine cannot claim an address, so calls connect without sound. Set it to this server's public ip (or <private>!<public> behind NAT) and re-run ./up.sh"
 else
-  warn "kamailio has not reported an rtpengine instance — check the media relay"
+  warn "kamailio has not reported an rtpengine instance — check: docker compose logs rtpengine"
 fi
 
 head "Cabinet"

@@ -1,52 +1,46 @@
 import axios from "axios";
-import type { NumberRow } from "./db";
+import { Cron } from "croner";
+import { duePushRequests, getNumber, markRequestPushAbandoned, markRequestPushFailed, markRequestPushed, type NumberRow, type RequestRow } from "./db";
+import { backoffSeconds } from "./outbox";
 import { looksLikeToken } from "./fpe";
 import { getWrConfig, TOKEN_ONLY_TARGETS, type StoredWrConfig } from "./webhook";
 
-// Pushes records to WinRiders via the documented client-integration API (guide §2):
-//   POST {WR_BASE_URL}/webhook/clients/{slug}/events
-//   Authorization: Bearer {api_key}
-//   { type, event_id, occurred_at,
-//     player: { external_id, phone_e164, first_name?, last_name?, country?, language? },
-//     data:   { player_segment, cohort? } }
-// phone_e164 carries the TOKEN; player_segment makes WinRiders build a segment.
-// event_id makes retries idempotent (WR dedupes on it). 202 = received.
+export const PUSH_MAX_ATTEMPTS = 12;
 
 export type PushResult = {
   token: string;
+  call_id: string;
   status: number;
   ok: boolean;
   deduped?: boolean;
   error?: string;
 };
 
-// Optional fields are included only when they satisfy winriders'
-// event-envelope.schema.ts, so one malformed value (e.g. country "Ukraine" instead
-// of "UA") can't 400 the whole event.
-const PLAYER_TARGETS = new Set(["external_id", "phone_e164", "country", "language", "first_name", "last_name"]);
+const PLAYER_TARGETS = new Set(["phone_e164", "country", "language", "first_name", "last_name"]);
 
-function sourceValue(r: NumberRow, from: string, wr: StoredWrConfig): string | null {
+function sourceValue(r: NumberRow, req: RequestRow, from: string, wr: StoredWrConfig): string | null {
   if (from === "token") return r.token;
   if (from === "user_id") return r.user_id;
   if (from === "country") return r.country && r.country.length === 2 ? r.country : null;
   if (from === "language") return r.language && r.language.length >= 2 && r.language.length <= 8 ? r.language : null;
   if (from === "first_name") return r.first_name ? r.first_name.slice(0, 128) : null;
   if (from === "last_name") return r.last_name ? r.last_name.slice(0, 128) : null;
-  if (from === "segment") return r.segment ?? wr.playerSegment;
-  if (from === "cohort") return r.cohort ?? wr.cohort ?? null;
+  if (from === "segment") return req.segment ?? r.segment ?? wr.playerSegment;
+  if (from === "cohort") return req.cohort ?? r.cohort ?? wr.cohort ?? null;
   return null;
 }
 
-function buildEvent(r: NumberRow, wr: StoredWrConfig) {
+export function buildEvent(r: NumberRow, req: RequestRow, wr: StoredWrConfig) {
   if (!looksLikeToken(r.token) || r.token === r.real) {
     throw new Error(`refusing to send a real phone number to WinRiders (row ${r.id})`);
   }
 
-  const player: Record<string, string> = {};
+  const player: Record<string, string> = { external_id: req.call_id };
   const data: Record<string, string> = {};
 
   for (const field of wr.fields) {
-    const value = sourceValue(r, field.from, wr);
+    if ((field.as as string) === "external_id") continue;
+    const value = sourceValue(r, req, field.from, wr);
     if (value == null || value === "") continue;
     if ((TOKEN_ONLY_TARGETS as readonly string[]).includes(field.as) && value !== r.token) {
       throw new Error(`refusing to send a non-token value in ${field.as} (row ${r.id})`);
@@ -55,11 +49,11 @@ function buildEvent(r: NumberRow, wr: StoredWrConfig) {
     else data[field.as] = value;
   }
 
-  if (!player.external_id) throw new Error(`external_id is not mapped (row ${r.id})`);
+  if (!player.phone_e164) throw new Error(`phone_e164 is not mapped (row ${r.id})`);
 
   return {
     type: wr.eventType,
-    event_id: `hn-${r.token}`,
+    event_id: `hn-${req.call_id}`,
     occurred_at: new Date().toISOString(),
     player,
     data,
@@ -74,14 +68,19 @@ function requireWr() {
   return { ...wr, url: `${wr.baseUrl.replace(/\/$/, "")}/webhook/clients/${wr.slug}/events` };
 }
 
-export async function pushRecord(record: NumberRow): Promise<PushResult> {
+export async function pushRequest(req: RequestRow): Promise<PushResult> {
   const wr = requireWr();
+  const record = getNumber(req.number_id);
+  if (!record) {
+    return { token: "", call_id: req.call_id, status: 0, ok: false, error: `number ${req.number_id} is gone` };
+  }
   let event: ReturnType<typeof buildEvent>;
   try {
-    event = buildEvent(record, wr);
+    event = buildEvent(record, req, wr);
   } catch (e) {
     console.error(`[hidden-numbers] ${(e as Error).message}`);
-    return { token: record.token, status: 0, ok: false, error: (e as Error).message };
+    markRequestPushAbandoned(req.call_id, (e as Error).message, PUSH_MAX_ATTEMPTS);
+    return { token: record.token, call_id: req.call_id, status: 0, ok: false, error: (e as Error).message };
   }
   try {
     const response = await axios.post(wr.url, event, {
@@ -94,34 +93,63 @@ export async function pushRecord(record: NumberRow): Promise<PushResult> {
       validateStatus: () => true,
     });
     const body = response.data as { deduplicated?: boolean } | undefined;
+    const ok = response.status === 202;
+    if (ok) markRequestPushed(req.call_id);
+    else markRequestPushFailed(req.call_id, `winriders responded ${response.status}`, backoffSeconds(req.push_attempts + 1));
     return {
       token: record.token,
+      call_id: req.call_id,
       status: response.status,
-      ok: response.status === 202,
+      ok,
       deduped: Boolean(body?.deduplicated),
     };
   } catch (e) {
     const err = e as { code?: string; message?: string };
-    return { token: record.token, status: 0, ok: false, error: err.code ?? err.message ?? "request failed" };
+    const error = err.code ?? err.message ?? "request failed";
+    markRequestPushFailed(req.call_id, error, backoffSeconds(req.push_attempts + 1));
+    return { token: record.token, call_id: req.call_id, status: 0, ok: false, error };
   }
 }
 
-export async function pushRecords(records: NumberRow[], concurrency = 4): Promise<PushResult[]> {
+export async function pushRequests(requests: RequestRow[], concurrency = 4): Promise<PushResult[]> {
   requireWr();
-  const results: PushResult[] = new Array(records.length);
+  const results: PushResult[] = new Array(requests.length);
   let cursor = 0;
 
   const worker = async (): Promise<void> => {
-    while (cursor < records.length) {
+    while (cursor < requests.length) {
       const index = cursor;
       cursor += 1;
-      results[index] = await pushRecord(records[index]);
+      results[index] = await pushRequest(requests[index]);
     }
   };
 
-  const size = Math.max(1, Math.min(concurrency, records.length));
+  const size = Math.max(1, Math.min(concurrency, requests.length));
   await Promise.all(Array.from({ length: size }, worker));
   return results;
+}
+
+export async function retryPushes(limit = 50): Promise<{ sent: number; failed: number }> {
+  const due = duePushRequests(PUSH_MAX_ATTEMPTS, limit);
+  if (due.length === 0) return { sent: 0, failed: 0 };
+  let results: PushResult[];
+  try {
+    results = await pushRequests(due);
+  } catch (e) {
+    console.error(`[hidden-numbers] push retry skipped: ${(e as Error).message}`);
+    return { sent: 0, failed: due.length };
+  }
+  return { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
+}
+
+export function startPushRetryCron(pattern = "*/30 * * * * *"): Cron {
+  return new Cron(pattern, { protect: true, name: "push-retry" }, async () => {
+    try {
+      await retryPushes();
+    } catch (e) {
+      console.error("[hidden-numbers] push retry failed", e);
+    }
+  });
 }
 
 export type LeadCall = {

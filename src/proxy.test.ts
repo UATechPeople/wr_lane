@@ -7,28 +7,39 @@ process.env.DB_PATH = "/tmp/hn-proxy-test.sqlite";
 rmSync(process.env.DB_PATH, { force: true });
 
 const { resultForOutcome } = await import("./status");
-const { buildBody, crmConfigSchema, DEFAULT_CRM_CONFIG, resolveCrmUrl, isWebhookId } = await import("./webhook");
+const { buildResultBody, parsePayload, crmConfigSchema, DEFAULT_CRM_CONFIG, resolveCrmUrl, isWebhookId } = await import("./webhook");
 const { backoffSeconds } = await import("./outbox");
-const { outboxEnqueue, outboxClaim, outboxMarkDelivered, insertNumbers, uploadIdByLabel, getByToken } = await import("./db");
-const { normalizeUserId } = await import("./hooks");
+const {
+  outboxEnqueue,
+  outboxClaim,
+  outboxMarkDelivered,
+  insertNumbers,
+  uploadIdByLabel,
+  getByToken,
+  insertRequest,
+  getRequest,
+  requestsForNumber,
+  latestOpenRequestForNumber,
+  recordRequestResult,
+  markRequestPushed,
+  markRequestPushFailed,
+  duePushRequests,
+} = await import("./db");
+const { normalizeUserId, payloadUserId, validWebhookUrl, callIdFromExternalId } = await import("./hooks");
 const { getWrConfig, saveWrConfig } = await import("./webhook");
 const { getSetting } = await import("./db");
 const { looksLikeToken, encryptPhone } = await import("./fpe");
-const { pushRecords } = await import("./winriders");
+const { pushRequests, buildEvent, PUSH_MAX_ATTEMPTS } = await import("./winriders");
 const { wrConfigSchema, DEFAULT_WR_FIELDS } = await import("./webhook");
 
 const FACTS = {
   phone: "+380958145553",
-  token: "+940612579184136",
-  user_id: "12345",
+  call_id: "5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60",
   result: "send_sms",
-  outcome: "agreed",
-  attempts: 2,
-  lead_id: "lead-1",
-  campaign_id: "camp-1",
-  event: "call.finished",
-  sent_at: "2026-08-26T10:00:00Z",
+  payload: { a: "b", user_id: "12345" },
 };
+
+const TOKEN = "+940612579184136";
 
 describe("outcome mapping", () => {
   test("maps every status the client asked for", () => {
@@ -55,104 +66,50 @@ describe("outcome mapping", () => {
 });
 
 describe("crm body composition", () => {
-  test("emits exactly the keys the client configured", () => {
-    const config = crmConfigSchema.parse({
-      url: "https://crm.example/hook",
-      fields: [
-        { as: "user", from: "phone" },
-        { as: "client_id", from: "user_id" },
-        { as: "status", from: "result" },
-      ],
-    });
-    expect(buildBody(config, FACTS)).toEqual({ user: "+380958145553", client_id: "12345", status: "send_sms" });
-  });
-
-  test("sends the decrypted number, never the token, unless the token is asked for", () => {
-    const config = crmConfigSchema.parse({ url: "https://crm.example/hook", fields: [{ as: "user", from: "phone" }] });
-    expect(buildBody(config, FACTS).user).toBe(FACTS.phone);
-    expect(JSON.stringify(buildBody(config, FACTS))).not.toContain(FACTS.token);
-  });
-
-  test("missing facts become null rather than dropping the key", () => {
-    const config = crmConfigSchema.parse({ url: "https://crm.example/hook", fields: [{ as: "uid", from: "user_id" }] });
-    expect(buildBody(config, { ...FACTS, user_id: null })).toEqual({ uid: null });
-  });
-
-  test("rejects an unknown source field", () => {
-    expect(() => crmConfigSchema.parse({ url: "https://crm.example/hook", fields: [{ as: "x", from: "secret_key" }] })).toThrow();
-  });
-
-  test("every source field is addressable and lands under its own key", () => {
-    const config = crmConfigSchema.parse({
-      url: "https://crm.example/hook",
-      fields: [
-        { as: "a", from: "phone" },
-        { as: "b", from: "token" },
-        { as: "c", from: "user_id" },
-        { as: "d", from: "result" },
-        { as: "e", from: "outcome" },
-        { as: "f", from: "attempts" },
-        { as: "g", from: "lead_id" },
-        { as: "h", from: "campaign_id" },
-        { as: "i", from: "event" },
-        { as: "j", from: "sent_at" },
-      ],
-    });
-    expect(buildBody(config, FACTS)).toEqual({
-      a: FACTS.phone,
-      b: FACTS.token,
-      c: FACTS.user_id,
-      d: FACTS.result,
-      e: FACTS.outcome,
-      f: FACTS.attempts,
-      g: FACTS.lead_id,
-      h: FACTS.campaign_id,
-      i: FACTS.event,
-      j: FACTS.sent_at,
+  test("emits the fixed shape the client agreed on", () => {
+    expect(buildResultBody(FACTS)).toEqual({
+      phone: "+380958145553",
+      call_id: FACTS.call_id,
+      result: "send_sms",
+      payload: { a: "b", user_id: "12345" },
     });
   });
 
-  test("one source can feed several keys", () => {
-    const config = crmConfigSchema.parse({
-      url: "https://crm.example/hook",
-      fields: [
-        { as: "phone", from: "phone" },
-        { as: "msisdn", from: "phone" },
-      ],
-    });
-    expect(buildBody(config, FACTS)).toEqual({ phone: FACTS.phone, msisdn: FACTS.phone });
+  test("sends the decrypted number and never the token", () => {
+    expect(JSON.stringify(buildResultBody(FACTS))).not.toContain(TOKEN);
   });
 
-  test("an empty mapping sends an empty body rather than leaking defaults", () => {
-    const config = crmConfigSchema.parse({ url: "https://crm.example/hook", fields: [] });
-    expect(buildBody(config, FACTS)).toEqual({});
+  test("passes the client payload back untouched, nested and all", () => {
+    const payload = { a: "b", nested: { deep: [1, 2, { x: "y" }] }, user_id: 42 };
+    expect(buildResultBody({ ...FACTS, payload }).payload).toEqual(payload);
   });
 
-  test("a repeated key keeps the last mapping and does not throw", () => {
-    const config = crmConfigSchema.parse({
-      url: "https://crm.example/hook",
-      fields: [
-        { as: "v", from: "phone" },
-        { as: "v", from: "result" },
-      ],
-    });
-    expect(buildBody(config, FACTS)).toEqual({ v: FACTS.result });
+  test("a request that carried no payload yields null, not a missing key", () => {
+    const body = buildResultBody({ ...FACTS, payload: undefined });
+    expect("payload" in body).toBe(true);
+    expect(body.payload).toBeNull();
   });
 
-  test("rejects a malformed url, an oversized mapping and a blank key", () => {
+  test("stored payload is decoded from text and survives a non-json string", () => {
+    expect(parsePayload(JSON.stringify({ a: "b" }))).toEqual({ a: "b" });
+    expect(parsePayload(null)).toBeNull();
+    expect(parsePayload("")).toBeNull();
+    expect(parsePayload("plain")).toBe("plain");
+  });
+
+  test("rejects a malformed url", () => {
     expect(() => crmConfigSchema.parse({ url: "not-a-url" })).toThrow();
-    expect(() =>
-      crmConfigSchema.parse({
-        url: "https://crm.example/hook",
-        fields: Array.from({ length: 33 }, (_, i) => ({ as: `k${i}`, from: "phone" })),
-      }),
-    ).toThrow();
-    expect(() => crmConfigSchema.parse({ url: "https://crm.example/hook", fields: [{ as: "", from: "phone" }] })).toThrow();
   });
 
-  test("default config ships a usable mapping", () => {
-    expect(DEFAULT_CRM_CONFIG.fields.map((f) => f.as)).toEqual(["user", "user_id", "result"]);
+  test("a stored config from the mapping era still loads", () => {
+    const parsed = crmConfigSchema.parse({ url: "https://crm.example/hook", fields: [{ as: "user", from: "phone" }] });
+    expect(parsed.url).toBe("https://crm.example/hook");
+    expect("fields" in parsed).toBe(false);
+  });
+
+  test("default config has no address and no headers", () => {
     expect(DEFAULT_CRM_CONFIG.url).toBe("");
+    expect(DEFAULT_CRM_CONFIG.headers).toEqual({});
   });
 });
 
@@ -260,20 +217,150 @@ describe("token shape guard", () => {
 });
 
 describe("outbound leak guard", () => {
+  const wr = { baseUrl: "https://core.example", slug: "s", apiKey: "k", playerSegment: "seg", eventType: "player.registered", fields: DEFAULT_WR_FIELDS };
+  const request = { call_id: "c-1", number_id: 1, segment: null, cohort: null } as never;
   const row = (over: Record<string, unknown>) =>
-    ({ id: 1, real: "+380958145553", token: "+380958145553", segment: null, cohort: null, ...over }) as never;
+    ({ id: 1, real: "+380958145553", token: "+380958145553", segment: null, cohort: null, user_id: null, country: null, language: null, first_name: null, last_name: null, ...over }) as never;
 
-  test("refuses to push a row whose token is really a phone number", async () => {
-    const [result] = await pushRecords([row({})]);
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("refusing to send a real phone number");
+  test("refuses to push a row whose token is really a phone number", () => {
+    expect(() => buildEvent(row({}), request, wr)).toThrow(/refusing to send a real phone number/);
   });
 
-  test("refuses when the token equals the real number even if it looks token-shaped", async () => {
+  test("refuses when the token equals the real number even if it looks token-shaped", () => {
     const same = encryptPhone("+380958145553");
-    const [result] = await pushRecords([row({ real: same, token: same })]);
+    expect(() => buildEvent(row({ real: same, token: same }), request, wr)).toThrow(/refusing to send a real phone number/);
+  });
+
+  test("a push that cannot build an event marks the request failed instead of silently dropping it", async () => {
+    const phone = "+38093" + String(Date.now()).slice(-7);
+    insertNumbers(uploadIdByLabel("leak-test"), [{ real: phone, token: phone }]);
+    const number = getByToken(phone)!;
+    const req = insertRequest({ call_id: crypto.randomUUID(), number_id: number.id });
+    const [result] = await pushRequests([req]);
     expect(result.ok).toBe(false);
-    expect(result.error).toContain("refusing to send a real phone number");
+    const stored = getRequest(req.call_id)!;
+    expect(stored.push_error).toContain("refusing to send a real phone number");
+    expect(stored.pushed_at).toBeNull();
+    expect(stored.push_attempts).toBe(PUSH_MAX_ATTEMPTS);
+    expect(duePushRequests(PUSH_MAX_ATTEMPTS).some((r) => r.call_id === req.call_id)).toBe(false);
+  });
+});
+
+describe("event identity", () => {
+  const wr = { baseUrl: "https://core.example", slug: "s", apiKey: "k", playerSegment: "seg", eventType: "player.registered", fields: DEFAULT_WR_FIELDS };
+  const phone = "+380958145553";
+  const token = encryptPhone(phone);
+  const number = { id: 7, real: phone, token, segment: "hidden", cohort: null, user_id: "u1", country: null, language: null, first_name: null, last_name: null } as never;
+  const request = (over: Record<string, unknown>) => ({ call_id: "11111111-2222-4333-8444-555555555555", number_id: 7, segment: null, cohort: null, ...over }) as never;
+
+  test("external_id and event_id are the call id, phone_e164 is the token", () => {
+    const event = buildEvent(number, request({}), wr);
+    expect(event.player.external_id).toBe("11111111-2222-4333-8444-555555555555");
+    expect(event.event_id).toBe("hn-11111111-2222-4333-8444-555555555555");
+    expect(event.player.phone_e164).toBe(token);
+    expect(JSON.stringify(event)).not.toContain(phone);
+  });
+
+  test("two requests for the same phone produce two distinct identities", () => {
+    const a = buildEvent(number, request({ call_id: "a-1" }), wr);
+    const b = buildEvent(number, request({ call_id: "b-2" }), wr);
+    expect(a.player.external_id).not.toBe(b.player.external_id);
+    expect(a.event_id).not.toBe(b.event_id);
+    expect(a.player.phone_e164).toBe(b.player.phone_e164);
+  });
+
+  test("a legacy external_id mapping is ignored rather than overriding the call id", () => {
+    const legacy = { ...wr, fields: [{ as: "external_id", from: "token" }, ...DEFAULT_WR_FIELDS] } as never;
+    expect(buildEvent(number, request({}), legacy).player.external_id).toBe("11111111-2222-4333-8444-555555555555");
+  });
+
+  test("segment and cohort come from the request first, then the number, then the defaults", () => {
+    expect(buildEvent(number, request({ segment: "nl", cohort: "welcome" }), wr).data).toEqual({ player_segment: "nl", cohort: "welcome" });
+    expect(buildEvent(number, request({}), wr).data).toEqual({ player_segment: "hidden" });
+    expect(buildEvent({ ...(number as object), segment: null } as never, request({}), { ...wr, cohort: "base" }).data).toEqual({
+      player_segment: "seg",
+      cohort: "base",
+    });
+  });
+});
+
+describe("requests", () => {
+  const fresh = () => {
+    const phone = "+38097" + String(Date.now() + Math.floor(Math.random() * 1000)).slice(-7);
+    const token = encryptPhone(phone);
+    insertNumbers(uploadIdByLabel("requests-test"), [{ real: phone, token }]);
+    return getByToken(token)!;
+  };
+
+  test("one phone can carry many requests, each with its own call id and payload", () => {
+    const number = fresh();
+    const first = insertRequest({ call_id: crypto.randomUUID(), number_id: number.id, cohort: "welcome", payload: { user_id: "1" } });
+    const second = insertRequest({ call_id: crypto.randomUUID(), number_id: number.id, cohort: "reactivation", payload: { user_id: "1", touch: 2 } });
+    const list = requestsForNumber(number.id);
+    expect(list.map((r) => r.call_id).sort()).toEqual([first.call_id, second.call_id].sort());
+    expect(parsePayload(second.payload)).toEqual({ user_id: "1", touch: 2 });
+  });
+
+  test("the latest open request is the one still waiting for a result", () => {
+    const number = fresh();
+    const older = insertRequest({ call_id: crypto.randomUUID(), number_id: number.id });
+    recordRequestResult(older.call_id, { leadId: "l1", campaignId: "c1", outcome: "no_answer", result: "no_answer", attempts: 2 });
+    const newer = insertRequest({ call_id: crypto.randomUUID(), number_id: number.id });
+    expect(latestOpenRequestForNumber(number.id)!.call_id).toBe(newer.call_id);
+  });
+
+
+  test("a failed push is scheduled for a retry, a successful one closes the request", () => {
+    const number = fresh();
+    const req = insertRequest({ call_id: crypto.randomUUID(), number_id: number.id });
+    expect(duePushRequests(PUSH_MAX_ATTEMPTS).some((r) => r.call_id === req.call_id)).toBe(true);
+    markRequestPushFailed(req.call_id, "boom", 600);
+    const failed = getRequest(req.call_id)!;
+    expect(failed.push_error).toBe("boom");
+    expect(failed.pushed_at).toBeNull();
+    expect(failed.push_attempts).toBe(1);
+    expect(failed.next_push_at).not.toBeNull();
+    expect(duePushRequests(PUSH_MAX_ATTEMPTS).some((r) => r.call_id === req.call_id)).toBe(false);
+    markRequestPushed(req.call_id);
+    const done = getRequest(req.call_id)!;
+    expect(done.push_error).toBeNull();
+    expect(done.pushed_at).not.toBeNull();
+    expect(done.next_push_at).toBeNull();
+  });
+
+  test("a retry becomes due once its backoff has passed and stops after the cap", () => {
+    const number = fresh();
+    const req = insertRequest({ call_id: crypto.randomUUID(), number_id: number.id });
+    markRequestPushFailed(req.call_id, "boom", 0);
+    expect(duePushRequests(PUSH_MAX_ATTEMPTS).some((r) => r.call_id === req.call_id)).toBe(true);
+    for (let i = 1; i < PUSH_MAX_ATTEMPTS; i += 1) markRequestPushFailed(req.call_id, "boom", 0);
+    expect(getRequest(req.call_id)!.push_attempts).toBe(PUSH_MAX_ATTEMPTS);
+    expect(duePushRequests(PUSH_MAX_ATTEMPTS).some((r) => r.call_id === req.call_id)).toBe(false);
+  });
+});
+
+describe("inbound request fields", () => {
+  test("user_id is read from the payload when the top level has none", () => {
+    expect(payloadUserId({ a: "b", user_id: "12345" })).toBe("12345");
+    expect(payloadUserId({ user_id: 7 })).toBe(7);
+    expect(payloadUserId({ a: "b" })).toBeUndefined();
+    expect(payloadUserId(null)).toBeUndefined();
+    expect(payloadUserId([1, 2])).toBeUndefined();
+    expect(payloadUserId("x")).toBeUndefined();
+  });
+
+  test("webhook_url must be an http(s) address", () => {
+    expect(validWebhookUrl("https://api-eu.customer.io/v1/webhook/764e97035ef6a03e")).toBe("https://api-eu.customer.io/v1/webhook/764e97035ef6a03e");
+    expect(validWebhookUrl("ftp://x")).toBeNull();
+    expect(validWebhookUrl("not a url")).toBeNull();
+    expect(validWebhookUrl(undefined)).toBeNull();
+  });
+
+  test("the call id is recovered from a client-prefixed external id", () => {
+    expect(callIdFromExternalId("lalastars:5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60")).toBe("5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60");
+    expect(callIdFromExternalId("5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60")).toBe("5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60");
+    expect(callIdFromExternalId(null)).toBeNull();
+    expect(callIdFromExternalId("slug:")).toBeNull();
   });
 });
 
@@ -281,30 +368,27 @@ describe("winriders mapping guard", () => {
   const base = { baseUrl: "https://core.example", slug: "s", apiKey: "k", playerSegment: "seg" };
 
   test("the real phone number is not even an allowed source", () => {
-    expect(() =>
-      wrConfigSchema.parse({ ...base, fields: [{ as: "external_id", from: "token" }, { as: "phone_e164", from: "phone" }] }),
-    ).toThrow();
+    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "phone_e164", from: "phone" }] })).toThrow();
   });
 
-  test("identity fields refuse any source other than the token", () => {
-    expect(() =>
-      wrConfigSchema.parse({ ...base, fields: [{ as: "external_id", from: "token" }, { as: "phone_e164", from: "user_id" }] }),
-    ).toThrow(/phone_e164 may only carry the token/);
-    expect(() =>
-      wrConfigSchema.parse({ ...base, fields: [{ as: "external_id", from: "segment" }, { as: "phone_e164", from: "token" }] }),
-    ).toThrow(/external_id may only carry the token/);
-  });
-
-  test("identity fields cannot be dropped from the mapping", () => {
-    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "external_id", from: "token" }] })).toThrow(
-      /phone_e164 must be mapped/,
+  test("phone_e164 refuses any source other than the token", () => {
+    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "phone_e164", from: "user_id" }] })).toThrow(
+      /phone_e164 may only carry the token/,
     );
+  });
+
+  test("phone_e164 cannot be dropped from the mapping", () => {
+    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "cohort", from: "cohort" }] })).toThrow(/phone_e164 must be mapped/);
+  });
+
+  test("external_id is no longer mappable — it is always the call id", () => {
+    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "external_id", from: "token" }, { as: "phone_e164", from: "token" }] })).toThrow();
   });
 
   test("a correct mapping saves, and the shipped default is one", () => {
     const parsed = wrConfigSchema.parse({ ...base, fields: DEFAULT_WR_FIELDS });
     expect(parsed.fields).toEqual(DEFAULT_WR_FIELDS);
-    expect(DEFAULT_WR_FIELDS.filter((f) => f.as === "external_id" || f.as === "phone_e164").every((f) => f.from === "token")).toBe(true);
+    expect(DEFAULT_WR_FIELDS.find((f) => f.as === "phone_e164")!.from).toBe("token");
   });
 });
 
@@ -323,13 +407,28 @@ describe("winriders connection seeding", () => {
       slug: "operator-slug",
       apiKey: "operator-key",
       playerSegment: "operator-segment",
-      fields: [
-        { as: "external_id", from: "token" },
-        { as: "phone_e164", from: "token" },
-      ],
+      fields: [{ as: "phone_e164", from: "token" }],
     });
     expect(getWrConfig().slug).toBe("operator-slug");
     expect(getWrConfig().playerSegment).toBe("operator-segment");
+  });
+
+  test("a config saved before call ids loses its external_id row on read", async () => {
+    const { setSetting } = await import("./db");
+    setSetting(
+      "wr_connection",
+      JSON.stringify({
+        baseUrl: "https://old.example",
+        slug: "old",
+        apiKey: "k",
+        playerSegment: "seg",
+        fields: [
+          { as: "external_id", from: "token" },
+          { as: "phone_e164", from: "token" },
+        ],
+      }),
+    );
+    expect(getWrConfig().fields).toEqual([{ as: "phone_e164", from: "token" }]);
   });
 });
 
@@ -373,11 +472,39 @@ describe("outbox keeps its own target", () => {
     insertNumbers(uploadIdByLabel("routing-test"), [{ real: phone, token, webhook_id: "camp42" }]);
     const row = getByToken(token)!;
     const key = "route-" + Date.now();
-    expect(outboxEnqueue(row.id, key, { hello: "world" }, "https://api-eu.customer.io/v1/webhook/camp42")).toBe(true);
+    expect(outboxEnqueue(row.id, key, { hello: "world" }, "https://api-eu.customer.io/v1/webhook/camp42", "call-42")).toBe(true);
     const claimed = outboxClaim(50).filter((r: { dedupe_key: string }) => r.dedupe_key === key);
     expect(claimed).toHaveLength(1);
     expect(claimed[0].url).toBe("https://api-eu.customer.io/v1/webhook/camp42");
+    expect(claimed[0].call_id).toBe("call-42");
     expect(getByToken(token)!.webhook_id).toBe("camp42");
     outboxMarkDelivered(claimed[0].id);
+  });
+});
+
+describe("legacy numbers keep receiving results", () => {
+  test("a number pushed before call ids gets a request keyed by its token", async () => {
+    const { backfillLegacyRequests, markPushed } = await import("./db");
+    const phone = "+38099" + String(Date.now()).slice(-7);
+    const token = encryptPhone(phone);
+    insertNumbers(uploadIdByLabel("legacy"), [{ real: phone, token, user_id: "legacy-user", webhook_id: "brand1" }]);
+    markPushed([token]);
+    const number = getByToken(token)!;
+    expect(backfillLegacyRequests()).toBeGreaterThanOrEqual(1);
+    expect(backfillLegacyRequests()).toBe(0);
+    const req = getRequest(token)!;
+    expect(req.number_id).toBe(number.id);
+    expect(req.webhook_id).toBe("brand1");
+    expect(parsePayload(req.payload)).toEqual({ user_id: "legacy-user" });
+    expect(callIdFromExternalId(`lalastars:${token}`)).toBe(token);
+  });
+
+  test("a number never pushed is left alone", async () => {
+    const { backfillLegacyRequests } = await import("./db");
+    const phone = "+38098" + String(Date.now()).slice(-7);
+    const token = encryptPhone(phone);
+    insertNumbers(uploadIdByLabel("legacy"), [{ real: phone, token }]);
+    backfillLegacyRequests();
+    expect(requestsForNumber(getByToken(token)!.id)).toHaveLength(0);
   });
 });

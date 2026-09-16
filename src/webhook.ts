@@ -2,26 +2,6 @@ import { z } from "zod";
 import { config } from "./config";
 import { getSetting, setSetting } from "./db";
 
-export const SOURCE_FIELDS = [
-  "phone",
-  "token",
-  "user_id",
-  "result",
-  "outcome",
-  "attempts",
-  "lead_id",
-  "campaign_id",
-  "event",
-  "sent_at",
-] as const;
-
-export type SourceField = (typeof SOURCE_FIELDS)[number];
-
-const fieldSchema = z.object({
-  as: z.string().min(1).max(64),
-  from: z.enum(SOURCE_FIELDS),
-});
-
 export const WEBHOOK_ID_TOKEN = "{id}";
 
 export const crmConfigSchema = z.object({
@@ -34,7 +14,6 @@ export const crmConfigSchema = z.object({
       message: `template must be a url containing ${WEBHOOK_ID_TOKEN}`,
     }),
   headers: z.record(z.string().min(1).max(128), z.string().max(2048)).default({}),
-  fields: z.array(fieldSchema).max(32).default([]),
   timeoutMs: z.number().int().positive().max(120_000).default(10_000),
 });
 
@@ -44,16 +23,10 @@ export const DEFAULT_CRM_CONFIG: CrmConfig = {
   url: "",
   urlTemplate: "",
   headers: {},
-  fields: [
-    { as: "user", from: "phone" },
-    { as: "user_id", from: "user_id" },
-    { as: "result", from: "result" },
-  ],
   timeoutMs: 10_000,
 };
 
 export const WR_TARGET_FIELDS = [
-  "external_id",
   "phone_e164",
   "country",
   "language",
@@ -65,13 +38,12 @@ export const WR_TARGET_FIELDS = [
 
 export const WR_SOURCE_FIELDS = ["token", "user_id", "country", "language", "first_name", "last_name", "segment", "cohort"] as const;
 
-export const TOKEN_ONLY_TARGETS = ["external_id", "phone_e164"] as const;
+export const TOKEN_ONLY_TARGETS = ["phone_e164"] as const;
 
 export type WrTarget = (typeof WR_TARGET_FIELDS)[number];
 export type WrSource = (typeof WR_SOURCE_FIELDS)[number];
 
 export const DEFAULT_WR_FIELDS: { as: WrTarget; from: WrSource }[] = [
-  { as: "external_id", from: "token" },
   { as: "phone_e164", from: "token" },
   { as: "player_segment", from: "segment" },
   { as: "cohort", from: "cohort" },
@@ -130,9 +102,15 @@ const DEFAULT_WR: StoredWrConfig = {
   fields: DEFAULT_WR_FIELDS,
 };
 
+const LEGACY_WR_TARGETS = new Set(["external_id"]);
+
+function dropLegacyFields(cfg: StoredWrConfig): StoredWrConfig {
+  return { ...cfg, fields: cfg.fields.filter((f) => !LEGACY_WR_TARGETS.has(f.as)) };
+}
+
 export function getWrConfig(): StoredWrConfig {
   const raw = getSetting(WR_KEY);
-  if (raw) return { ...DEFAULT_WR, ...(JSON.parse(raw) as Partial<StoredWrConfig>) };
+  if (raw) return dropLegacyFields({ ...DEFAULT_WR, ...(JSON.parse(raw) as Partial<StoredWrConfig>) });
 
   const seeded: StoredWrConfig = {
     ...DEFAULT_WR,
@@ -176,15 +154,9 @@ export function saveCrmConfig(input: unknown): CrmConfig {
 
 export type ResultFacts = {
   phone: string | null;
-  token: string;
-  user_id: string | null;
+  call_id: string;
   result: string | null;
-  outcome: string | null;
-  attempts: number | null;
-  lead_id: string | null;
-  campaign_id: string | null;
-  event: string | null;
-  sent_at: string | null;
+  payload: unknown;
 };
 
 export const WEBHOOK_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -200,12 +172,22 @@ export function resolveCrmUrl(config: CrmConfig, webhookId: string | null | unde
   return config.url;
 }
 
-export function buildBody(config: CrmConfig, facts: ResultFacts): Record<string, unknown> {
-  const body: Record<string, unknown> = {};
-  for (const field of config.fields) {
-    body[field.as] = facts[field.from] ?? null;
+export function parsePayload(raw: string | null | undefined): unknown {
+  if (raw == null || raw === "") return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
   }
-  return body;
+}
+
+export function buildResultBody(facts: ResultFacts): Record<string, unknown> {
+  return {
+    phone: facts.phone,
+    call_id: facts.call_id,
+    result: facts.result,
+    payload: facts.payload ?? null,
+  };
 }
 
 function readKey(key: string): string | null {

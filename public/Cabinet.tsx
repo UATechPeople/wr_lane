@@ -16,11 +16,9 @@ import type { BuildInfo } from "./lib/api";
 
 export function Cabinet({
   onLogout,
-  pushEnabled,
   build,
 }: {
   onLogout: () => void;
-  pushEnabled: boolean;
   build: BuildInfo | null;
 }) {
   const c = useCabinet();
@@ -49,11 +47,6 @@ export function Cabinet({
             >
               Export CSV
             </a>
-            {pushEnabled && (
-              <Button mode="secondary" disabled={c.busy || c.total === 0} onClick={c.push}>
-                Push to WinRiders →
-              </Button>
-            )}
             <Button onClick={c.openAdd}>
               <PlusIcon className="h-4 w-4" />
               Add numbers
