@@ -27,13 +27,10 @@ export type TranscriptCall = {
 
 export type Transcript = { available: boolean; calls: TranscriptCall[]; error?: string; leadId?: string };
 
-export type CrmField = { as: string; from: string };
-
 export type CrmConfig = {
   urlTemplate: string;
   url: string;
   headers: Record<string, string>;
-  fields: CrmField[];
   timeoutMs: number;
 };
 
@@ -54,7 +51,6 @@ export type Settings = {
   wr: WrConfig;
   inboundKey: string | null;
   coreKey: string | null;
-  sourceFields: string[];
   wrTargetFields: string[];
   wrSourceFields: string[];
   tokenOnlyTargets: string[];
@@ -83,7 +79,6 @@ export type UploadResult = {
   rows: { real: string; ok: boolean; error?: string }[];
 };
 
-export type PushResult = { sent: number; total: number; deduped: number; failed: number; error?: string };
 
 export const FIELDS: { key: string; label: string; required?: boolean }[] = [
   { key: "phone", label: "Phone → token", required: true },
@@ -114,7 +109,7 @@ export type BuildInfo = { version: string; commit: string | null; builtAt: strin
 const json = (r: Response) => r.json();
 
 export const api = {
-  me: (): Promise<{ user: string; pushEnabled: boolean; build?: BuildInfo }> =>
+  me: (): Promise<{ user: string; build?: BuildInfo }> =>
     fetch("/api/me").then((r) => {
       if (!r.ok) throw new Error("unauthenticated");
       return r.json();
@@ -144,7 +139,6 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ numbers }),
     }).then(json),
-  push: (): Promise<PushResult> => fetch("/api/push", { method: "POST" }).then(json),
   transcript: (id: number): Promise<Transcript> => fetch(`/api/numbers/${id}/transcript`).then(json),
   settings: (): Promise<Settings> => fetch("/api/settings").then(json),
   saveCrm: (crm: CrmConfig): Promise<{ crm?: CrmConfig; error?: string }> =>

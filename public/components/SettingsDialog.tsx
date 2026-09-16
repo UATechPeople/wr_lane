@@ -72,7 +72,7 @@ export function SettingsDialog({
       open={open}
       onClose={onClose}
       title="Integration settings"
-      description="Where call results go, how they are authorised, and what the body looks like."
+      description="Where call results go and how they are authorised."
       size="lg"
       footer={
         <>
@@ -236,42 +236,14 @@ export function SettingsDialog({
         </section>
 
         <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold text-neutral-900">Body fields</h3>
-          <p className="text-xs text-neutral-500">Left is the key your CRM receives, right is the value we put there.</p>
-          {draft.fields.map((field, i) => (
-            <div key={i} className="flex items-end gap-2">
-              <div className="flex-1">
-                <Input
-                  label="Your key"
-                  value={field.as}
-                  onChange={(e) =>
-                    patch({ fields: draft.fields.map((f, j) => (j === i ? { ...f, as: e.target.value } : f)) })
-                  }
-                />
-              </div>
-              <div className="flex-1">
-                <Select
-                  label="Our value"
-                  value={field.from}
-                  options={settings.sourceFields}
-                  onChange={(v) => patch({ fields: draft.fields.map((f, j) => (j === i ? { ...f, from: v } : f)) })}
-                />
-              </div>
-              <button
-                onClick={() => patch({ fields: draft.fields.filter((_, j) => j !== i) })}
-                className="mb-2 rounded-lg p-2 text-neutral-400 transition hover:bg-red-50 hover:text-red-600"
-              >
-                <TrashIcon className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-          <Button
-            mode="function"
-            onClick={() => patch({ fields: [...draft.fields, { as: "", from: settings.sourceFields[0] }] })}
-          >
-            <PlusIcon className="h-4 w-4" />
-            Add field
-          </Button>
+          <h3 className="text-sm font-semibold text-neutral-900">Result body</h3>
+          <p className="text-xs text-neutral-500">
+            Fixed shape. <code>payload</code> is returned exactly as your CRM sent it with the player; a request that
+            carried its own <code>webhook_url</code> is answered there instead of the addresses above.
+          </p>
+          <pre className="overflow-x-auto rounded-lg bg-neutral-900 p-3 text-xs text-neutral-100">
+            {JSON.stringify({ phone: "+31612345678", call_id: "uuid", result: "no_answer", payload: { user_id: "12345" } }, null, 2)}
+          </pre>
         </section>
 
         <section className="flex flex-col gap-3">

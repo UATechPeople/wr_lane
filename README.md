@@ -58,7 +58,6 @@ A token is always **15 digits**, a valid E.164 string that passes Platform' `^\+
 | PATCH | `/api/numbers/:id` | (UI) | replace the real number `{ "real": "+..." }` → re-tokenizes, resets push state |
 | DELETE | `/api/numbers/:id` | (UI) | delete one |
 | GET | `/api/export` | (UI) | tokens to ship to Platform (drop into `phone_e164`) |
-| POST | `/api/push` | (UI) | push the base to Platform as player events |
 | GET | `/api/decrypt?t=<token>` | `X-Decrypt-Key` | egress lookup → `{ "phone": "+..." }` (no caller yet — see Egress) |
 | GET | `/health` | — | liveness + base count |
 

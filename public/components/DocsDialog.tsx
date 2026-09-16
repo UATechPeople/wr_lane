@@ -13,7 +13,9 @@ const INBOUND_FIELDS: Field[] = [
   { name: "country", type: "string", note: "Optional ISO-3166 alpha-2, e.g. UA. Anything else is dropped." },
   { name: "language", type: "string", note: "Optional, 2–8 characters, e.g. uk." },
   { name: "segment", type: "string", note: "Optional. Overrides the default segment for this record." },
-  { name: "cohort", type: "string", note: "Optional. Platform builds a sub-segment named <segment>_<cohort>." },
+  { name: "cohort", type: "string", note: "Optional. Together with segment picks the Platform campaign, e.g. welcome or reactivation." },
+  { name: "webhook_url", type: "string", note: "Optional. Where the result for this very request must be posted. Overrides the addresses in Settings." },
+  { name: "payload", type: "object", note: "Optional. Anything you want back with the result — returned untouched. If it carries user_id, that is used as the person's id." },
 ];
 
 const RESULTS: { result: string; meaning: string }[] = [
@@ -115,11 +117,20 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
             <code className="rounded bg-neutral-100 px-1 font-mono text-xs">user_id</code> and posts the result to your CRM.
           </p>
           <p className="text-sm text-neutral-600">The real number never leaves your infrastructure.</p>
+          <p className="text-sm text-neutral-600">
+            Machine-readable OpenAPI spec with a try-it console:{" "}
+            <a href={`${origin}/docs`} target="_blank" rel="noreferrer" className="font-mono text-xs text-indigo-600 underline">
+              {origin}/docs
+            </a>{" "}
+            (JSON at <code className="rounded bg-neutral-100 px-1 font-mono text-xs">/docs/json</code>).
+          </p>
         </Section>
 
         <Section title="2. Send us a player">
           <p className="text-sm text-neutral-600">
-            One object or an array of them. The same number always produces the same token, so repeats are safe.
+            One object or an array of them. Every request is a separate call with its own{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">call_id</code> — send the same person twice and you get two
+            calls and two results, nothing is merged. The number itself always encrypts to the same token.
           </p>
           <FieldTable fields={INBOUND_FIELDS} />
           <Code>{`curl -X POST ${origin}/hook/players \\
@@ -127,15 +138,18 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
   -H "Content-Type: application/json" \\
   -d '{
     "phone": "+447700900123",
-    "user_id": "12345"
+    "segment": "hidden",
+    "cohort": "welcome",
+    "webhook_url": "https://crm.example.com/hooks/call-results",
+    "payload": { "user_id": "12345", "brand": "starz" }
   }'`}</Code>
           <p className="text-sm text-neutral-600">Or a batch:</p>
           <Code>{`curl -X POST ${origin}/hook/players \\
   -H "Authorization: Bearer ${inbound}" \\
   -H "Content-Type: application/json" \\
   -d '[
-    { "phone": "+447700900123", "user_id": "12345" },
-    { "phone": "+447700900456", "user_id": "12346", "cohort": "vip" }
+    { "phone": "+447700900123", "cohort": "welcome", "payload": { "user_id": "12345" } },
+    { "phone": "+447700900456", "cohort": "reactivation", "payload": { "user_id": "12346" } }
   ]'`}</Code>
           <p className="text-sm text-neutral-600">Answer — 202, with one row per record:</p>
           <Code>{`{
@@ -143,10 +157,11 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
   "accepted": 2,
   "pushed": { "sent": 2, "failed": 0 },
   "rows": [
-    { "phone": "+447700900123", "token": "+940612579184136", "ok": true },
-    { "phone": "+447700900456", "token": "+934219595183482", "ok": true }
+    { "phone": "+447700900123", "token": "+940612579184136", "call_id": "5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60", "ok": true },
+    { "phone": "+447700900456", "token": "+934219595183482", "call_id": "0b7d2c31-9e4f-4a6b-8c1d-2e3f4a5b6c7d", "ok": true }
   ]
 }`}</Code>
+
           <p className="text-sm text-neutral-600">
             A bad record fails on its own without spoiling the batch — you get{" "}
             <code className="rounded bg-neutral-100 px-1 font-mono text-xs">ok: false</code> and a reason for that row only.
@@ -155,8 +170,9 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
 
         <Section title="3. Sending results to several campaigns">
           <p className="text-sm text-neutral-600">
-            If different players must come back to different campaigns of your CRM, put that campaign's webhook id at the end of the
-            address you send them to. The cabinet remembers it and returns the result exactly there.
+            The simplest way is <code className="rounded bg-neutral-100 px-1 font-mono text-xs">webhook_url</code> in the request —
+            the result of that call goes exactly there. Alternatively put the campaign's webhook id at the end of the address you send
+            players to; the cabinet remembers it and builds the return address from the template in Settings.
           </p>
           <Code>{`curl -X POST ${origin}/hook/players/4b3bf9c2afab5dek \\
   -H "Authorization: Bearer ${inbound}" \\
@@ -175,21 +191,21 @@ result to: https://crm.example.com/hooks/4b3bf9c2afab5dek`}</Code>
         </Section>
 
         <Section title="4. What your CRM receives">
-          <p className="text-sm text-neutral-600">
-            The body is whatever you configured under Settings → Body fields, so the keys are yours. With the default mapping:
-          </p>
-          <Code>{`POST https://your-crm.example/hooks/call-result
+          <p className="text-sm text-neutral-600">One POST per call, to the request's webhook_url or the address from Settings:</p>
+          <Code>{`POST https://crm.example.com/hooks/call-results
 Authorization: Bearer <your key>
 Content-Type: application/json
 
 {
-  "user": "+447700900123",
-  "user_id": "12345",
-  "result": "send_sms"
+  "phone": "+447700900123",
+  "call_id": "5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60",
+  "result": "send_sms",
+  "payload": { "user_id": "12345", "brand": "starz" }
 }`}</Code>
           <p className="text-sm text-neutral-600">
-            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">user</code> is the decrypted real number — you get your own
-            customer back, not a token.
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">phone</code> is the decrypted real number,{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">call_id</code> is the one you got when you sent the player,{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">payload</code> is yours, returned as it came.
           </p>
         </Section>
 

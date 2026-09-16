@@ -7,14 +7,12 @@ export function useAuth() {
   const [status, setStatus] = useState<AuthStatus>("checking");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [pushEnabled, setPushEnabled] = useState(false);
   const [build, setBuild] = useState<BuildInfo | null>(null);
 
   useEffect(() => {
     api
       .me()
       .then((m) => {
-        setPushEnabled(!!m.pushEnabled);
         setBuild(m.build ?? null);
         setStatus("in");
       })
@@ -28,7 +26,6 @@ export function useAuth() {
       const res = await api.login(user, pass);
       if (res.ok) {
         const m = await api.me().catch(() => null);
-        setPushEnabled(!!m?.pushEnabled);
         setBuild(m?.build ?? null);
         setStatus("in");
       } else {
@@ -44,5 +41,5 @@ export function useAuth() {
     setStatus("out");
   }
 
-  return { status, error, busy, pushEnabled, build, login, logout };
+  return { status, error, busy, build, login, logout };
 }

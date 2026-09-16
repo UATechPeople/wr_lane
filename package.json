@@ -1,6 +1,6 @@
 {
   "name": "wr-hidden-numbers",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Client-side cabinet: hold the real number base, ship only FF3-1 tokens to Platform, decrypt on egress. Elysia (Bun) API + React UI (pre-built with Bun.build + Tailwind, served from dist/).",
   "module": "src/index.ts",
   "type": "module",
@@ -13,6 +13,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@elysiajs/openapi": "^1.4.16",
     "@elysiajs/static": "^1.1.1",
     "axios": "^1.19.0",
     "croner": "^10.0.1",

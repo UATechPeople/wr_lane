@@ -66,9 +66,4 @@ export const config = {
   // truth. Kamailio routes on it; /detokenize strips it before decrypting. The TOKEN
   // itself stays prefix-less — the prefix is applied at dial via Platform techPrefix.
   clientPrefix: process.env.CLIENT_PREFIX,
-
-  // Feature flag for the "Push to Platform" button + /push endpoint. HIDDEN by
-  // default so the change is opt-in and nobody has to touch envs to keep the old
-  // (no-push) behaviour. Set WR_PUSH_ENABLED=true (or 1) to enable.
-  pushEnabled: process.env.WR_PUSH_ENABLED === "true" || process.env.WR_PUSH_ENABLED === "1",
 };

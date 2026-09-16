@@ -118,18 +118,6 @@ export function useCabinet() {
     }
   }
 
-  async function push() {
-    setBusy(true);
-    try {
-      const res = await api.push();
-      if (res.error) notify(`Push failed: ${res.error}`, "error");
-      else notify(`Pushed ${res.sent} of ${res.total}` + (res.failed ? ` · ${res.failed} failed` : ""), res.failed ? "info" : "success");
-      await refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function saveEdit(id: number, patch: Record<string, string>) {
     if (Object.keys(patch).length === 0) {
       setEditing(null);
@@ -256,7 +244,6 @@ export function useCabinet() {
     adding, file, preview, map, editing, confirm,
     setPage, changeSearch, selectUpload,
     openAdd: () => setAdding(true), closeAdd, pickFile, remap, importFile, pasteNumbers, cancelFile: resetFile,
-    push,
     openEdit: setEditing, closeEdit: () => setEditing(null), saveEdit,
     askDeleteContact, askDeleteUpload, closeConfirm: () => setConfirm(null), runConfirm,
     dismissToast: () => setToast(null),
