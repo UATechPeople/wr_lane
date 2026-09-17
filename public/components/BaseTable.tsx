@@ -95,20 +95,16 @@ export function BaseTable({
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex items-center justify-end gap-0.5">
                   {r.external_id && (
-                    <Action title="Conversation from Platform" onClick={() => onTranscript(r)}>
+                    <Action title="Transcript" onClick={() => onTranscript(r)}>
                       <DocumentTextIcon className="h-4 w-4" />
                     </Action>
                   )}
-                  {r.delivery_status && r.delivery_status !== "delivered" && (
-                    <Action title={`Post the result to your CRM again${r.delivery_error ? ` — last error: ${r.delivery_error}` : ""}`} onClick={() => onResend(r)} tone="brand">
-                      <PaperAirplaneIcon className="h-4 w-4" />
-                    </Action>
-                  )}
-                  {!r.pushed_at && (
-                    <Action title="Send this number to Platform again" onClick={() => onPushAgain(r)} tone="brand">
-                      <CloudArrowUpIcon className="h-4 w-4" />
-                    </Action>
-                  )}
+                  <Action title={`Resend to CRM${r.delivery_error ? ` — last error: ${r.delivery_error}` : ""}`} onClick={() => onResend(r)} tone="brand">
+                    <PaperAirplaneIcon className="h-4 w-4" />
+                  </Action>
+                  <Action title="Push to Platform" onClick={() => onPushAgain(r)} tone="brand">
+                    <CloudArrowUpIcon className="h-4 w-4" />
+                  </Action>
                   <Action title="Edit" onClick={() => onEdit(r)}>
                     <PencilSquareIcon className="h-4 w-4" />
                   </Action>
