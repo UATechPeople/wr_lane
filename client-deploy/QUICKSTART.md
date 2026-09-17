@@ -52,7 +52,7 @@ from `keys.env`. Everything about sending players and receiving results is behin
 
 ```bash
 cd ..                                  # the folder holding hidden-numbers-client
-unzip -o hidden-numbers-*.zip
+unzip -o hidden-numbers-<version>.zip
 cd hidden-numbers-client && ./up.sh
 curl http://localhost:3500/version     # confirm the new version is up
 ./doctor.sh                            # and that the stack is wired correctly

@@ -16,14 +16,15 @@ docker save ghcr.io/uatechpeople/wr_lane-cabinet:latest \
 ```
 
 Put `images.tar.gz` next to the files from `client-deploy/` and zip the folder as
-`hidden-numbers-client/`. The archive carries `.env.example`, never a live `.env`.
+`hidden-numbers-client/`, naming the archive after the cabinet version from `package.json`:
+`hidden-numbers-<version>.zip`. The archive carries `.env.example`, never a live `.env`.
 
 ## Installing or updating a host
 
 ```bash
-scp hidden-numbers.zip root@<host>:~/
+scp hidden-numbers-<version>.zip root@<host>:~/
 ssh root@<host>
-unzip -o hidden-numbers.zip && cd hidden-numbers-client
+unzip -o hidden-numbers-<version>.zip && cd hidden-numbers-client
 ./up.sh                                   # first run creates .env from the template
 curl http://localhost:3500/version        # confirm the build that is running
 ./doctor.sh                               # what is missing or broken, in one screen
