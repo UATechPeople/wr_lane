@@ -4,7 +4,6 @@ import { Modal } from "./Modal";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { StatusBadge } from "./StatusBadge";
-import { Select } from "./Select";
 import type { CrmConfig, Settings, TestResult, WrConfig } from "../lib/api";
 
 type HeaderPair = { name: string; value: string };
@@ -135,52 +134,23 @@ export function SettingsDialog({
         </section>
 
         <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold text-neutral-900">Fields sent to Platform</h3>
+          <h3 className="text-sm font-semibold text-neutral-900">What Platform receives</h3>
           <p className="text-xs text-neutral-500">
-            Identity fields are locked to the token — a real phone number can never be mapped into them.
+            Fixed shape. Only the token travels; the real number never does. <code>external_id</code> is the call_id of the request,{" "}
+            <code>player_segment</code> and <code>cohort</code> come from the request and fall back to the values above.
           </p>
-          {wr.fields.map((field, i) => {
-            const locked = settings.tokenOnlyTargets.includes(field.as);
-            return (
-              <div key={i} className="flex items-end gap-2">
-                <div className="flex-1">
-                  <Select
-                    label="Platform field"
-                    value={field.as}
-                    options={settings.wrTargetFields}
-                    disabled={locked}
-                    onChange={(v) => patchWr({ fields: wr.fields.map((f, j) => (j === i ? { ...f, as: v } : f)) })}
-                  />
-                </div>
-                <div className="flex-1">
-                  <Select
-                    label="Our value"
-                    value={field.from}
-                    options={settings.wrSourceFields}
-                    disabled={locked}
-                    onChange={(v) => patchWr({ fields: wr.fields.map((f, j) => (j === i ? { ...f, from: v } : f)) })}
-                  />
-                </div>
-                {locked ? (
-                  <span className="mb-3 text-xs font-semibold text-neutral-400">locked</span>
-                ) : (
-                  <button
-                    onClick={() => patchWr({ fields: wr.fields.filter((_, j) => j !== i) })}
-                    className="mb-2 rounded-lg p-2 text-neutral-400 transition hover:bg-red-50 hover:text-red-600"
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          <Button
-            mode="function"
-            onClick={() => patchWr({ fields: [...wr.fields, { as: "player_segment", from: "segment" }] })}
-          >
-            <PlusIcon className="h-4 w-4" />
-            Add field
-          </Button>
+          <pre className="overflow-x-auto rounded-lg bg-neutral-900 p-3 text-xs text-neutral-100">
+            {JSON.stringify(
+              {
+                type: wr.eventType,
+                event_id: "hn-7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19",
+                player: { external_id: "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", phone_e164: "+913694993501880" },
+                data: { player_segment: "hidden", cohort: "deau1" },
+              },
+              null,
+              2,
+            )}
+          </pre>
         </section>
 
         <section className="flex flex-col gap-3">

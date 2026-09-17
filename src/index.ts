@@ -37,9 +37,6 @@ import {
   saveWrConfig,
   setCoreKey,
   setInboundKey,
-  WR_SOURCE_FIELDS,
-  WR_TARGET_FIELDS,
-  TOKEN_ONLY_TARGETS,
 } from "./webhook";
 import {
   getRequest,
@@ -308,9 +305,6 @@ const api = new Elysia({ prefix: "/api" })
     wr: getWrConfig(),
     inboundKey: getInboundKey(),
     coreKey: getCoreKey(),
-    wrTargetFields: WR_TARGET_FIELDS,
-    wrSourceFields: WR_SOURCE_FIELDS,
-    tokenOnlyTargets: TOKEN_ONLY_TARGETS,
     defaults: DEFAULT_CRM_CONFIG,
   }))
 

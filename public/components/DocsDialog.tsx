@@ -113,8 +113,9 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
           <p className="text-sm text-neutral-600">
             Your CRM sends a real phone number to this cabinet. The cabinet encrypts it into a 15-digit token and forwards only the
             token to Platform. Platform dials the token; the real number is restored inside your own SIP proxy at the moment of the
-            call. When the call is over Platform posts the outcome back here, the cabinet decrypts the token, attaches your{" "}
-            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">user_id</code> and posts the result to your CRM.
+            call. When the call is over Platform posts the outcome back here, the cabinet decrypts the token, attaches the{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">payload</code> you sent and posts the result to the{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">webhook_url</code> of that request.
           </p>
           <p className="text-sm text-neutral-600">The real number never leaves your infrastructure.</p>
           <p className="text-sm text-neutral-600">
@@ -157,19 +158,24 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
   "accepted": 2,
   "pushed": { "sent": 2, "failed": 0 },
   "rows": [
-    { "phone": "+447700900123", "token": "+940612579184136", "call_id": "5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60", "ok": true },
-    { "phone": "+447700900456", "token": "+934219595183482", "call_id": "0b7d2c31-9e4f-4a6b-8c1d-2e3f4a5b6c7d", "ok": true }
+    { "phone": "+447700900123", "token": "+900979118411365", "call_id": "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", "ok": true },
+    { "phone": "+447700900456", "token": "+934219595183482", "call_id": "2b6d4f81-3c5e-4a7b-9d0e-6f1a2b3c4d5e", "ok": true }
   ]
 }`}</Code>
 
           <p className="text-sm text-neutral-600">
             A bad record fails on its own without spoiling the batch — you get{" "}
-            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">ok: false</code> and a reason for that row only.
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">ok: false</code> and a reason for that row only. A record
+            without <code className="rounded bg-neutral-100 px-1 font-mono text-xs">webhook_url</code> is answered to the address from
+            Settings.
           </p>
         </Section>
 
         <Section title="3. What your CRM receives">
-          <p className="text-sm text-neutral-600">One POST per call, to the request's webhook_url or the address from Settings:</p>
+          <p className="text-sm text-neutral-600">
+            One POST per call, to the request's <code className="rounded bg-neutral-100 px-1 font-mono text-xs">webhook_url</code>, with
+            the headers from Settings:
+          </p>
           <Code>{`POST https://crm.example.com/hooks/call-results
 Authorization: Bearer <your key>
 Content-Type: application/json
@@ -219,8 +225,12 @@ Content-Type: application/json
 
         <Section title="6. Importing and exporting by file">
           <p className="text-sm text-neutral-600">
-            CSV or Excel through “Add numbers”. A <code className="rounded bg-neutral-100 px-1 font-mono text-xs">phone</code> column is
-            required; the rest are optional and match the fields above. If your headers differ you map them by hand during the upload.
+            CSV or Excel through “Add numbers”, for a one-off base outside the CRM flow. A{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">phone</code> column is required; optional columns are{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">user_id</code>,{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">segment</code>,{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">cohort</code>, first_name, last_name, country, language. If
+            your headers differ you map them by hand during the upload. Results for these numbers go to the address from Settings.
           </p>
           <p className="text-sm text-neutral-600">
             The export contains tokens instead of phone numbers, so it is safe to hand to anyone — including us.
@@ -232,7 +242,7 @@ Content-Type: application/json
             fields={[
               { name: "401", type: "unauthorized", note: "Wrong key. Check the Authorization header against Settings." },
               { name: "503", type: "key not configured", note: "The cabinet has no key yet — generate one in Settings." },
-              { name: "422 already_a_token", type: "on send", note: "You sent a token where a real phone number belongs." },
+              { name: "202 ok: false", type: "on send", note: "That row was refused — the reason is next to it: a token instead of a phone number, a bad webhook_url, an unencryptable number. Other rows are unaffected." },
               { name: "422 real_number_received", type: "on result", note: "Platform sent a real number instead of a token — tokenisation is bypassed upstream and results are refused until it is fixed." },
             ]}
           />
