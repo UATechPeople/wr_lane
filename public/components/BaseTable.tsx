@@ -3,11 +3,13 @@ import type { Row } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
 
 function Action({
+  label,
   title,
   onClick,
   tone = "neutral",
   children,
 }: {
+  label: string;
   title: string;
   onClick: () => void;
   tone?: "neutral" | "brand" | "danger";
@@ -18,10 +20,11 @@ function Action({
       ? "text-red-500 hover:bg-red-50 hover:text-red-700"
       : tone === "brand"
         ? "text-brand-600 hover:bg-brand-50 hover:text-brand-800"
-        : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-800";
+        : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900";
   return (
-    <button onClick={onClick} title={title} aria-label={title} className={`rounded-lg p-1.5 transition ${color}`}>
+    <button onClick={onClick} title={title} className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold transition ${color}`}>
       {children}
+      <span>{label}</span>
     </button>
   );
 }
@@ -95,20 +98,20 @@ export function BaseTable({
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex items-center justify-end gap-0.5">
                   {r.external_id && (
-                    <Action title="Transcript" onClick={() => onTranscript(r)}>
+                    <Action label="transcript" title="Show the conversation from Platform" onClick={() => onTranscript(r)}>
                       <DocumentTextIcon className="h-4 w-4" />
                     </Action>
                   )}
-                  <Action title={`Resend to CRM${r.delivery_error ? ` — last error: ${r.delivery_error}` : ""}`} onClick={() => onResend(r)} tone="brand">
+                  <Action label="resend to CRM" title={`Post the call result to your CRM again${r.delivery_error ? ` — last error: ${r.delivery_error}` : ""}`} onClick={() => onResend(r)} tone="brand">
                     <PaperAirplaneIcon className="h-4 w-4" />
                   </Action>
-                  <Action title="Push to Platform" onClick={() => onPushAgain(r)} tone="brand">
+                  <Action label="push to Platform" title="Send the requests for this number to Platform again" onClick={() => onPushAgain(r)} tone="brand">
                     <CloudArrowUpIcon className="h-4 w-4" />
                   </Action>
-                  <Action title="Edit" onClick={() => onEdit(r)}>
+                  <Action label="edit" title="Edit this number" onClick={() => onEdit(r)}>
                     <PencilSquareIcon className="h-4 w-4" />
                   </Action>
-                  <Action title="Delete" onClick={() => onDelete(r)} tone="danger">
+                  <Action label="delete" title="Delete this number from the cabinet" onClick={() => onDelete(r)} tone="danger">
                     <TrashIcon className="h-4 w-4" />
                   </Action>
                 </div>
