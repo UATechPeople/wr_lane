@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, invertMap, type CrmConfig, type Preview, type Row, type Settings, type Transcript, type Upload, type WrConfig } from "./api";
+import { api, invertMap, type CrmConfig, type Preview, type RequestRow, type Row, type Settings, type Transcript, type Upload, type WrConfig } from "./api";
 import type { ToastData, ToastTone } from "../components/Toast";
 
 const PAGE_SIZE = 25;
@@ -27,6 +27,8 @@ export function useCabinet() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [docsOpen, setDocsOpen] = useState(false);
+  const [requestsRow, setRequestsRow] = useState<Row | null>(null);
+  const [requests, setRequests] = useState<RequestRow[] | null>(null);
   const [transcriptRow, setTranscriptRow] = useState<Row | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [transcriptBusy, setTranscriptBusy] = useState(false);
@@ -175,6 +177,29 @@ export function useCabinet() {
     });
   }
 
+  async function openRequests(row: Row) {
+    setRequestsRow(row);
+    setRequests(null);
+    const res = await api.requests(row.id);
+    setRequests(res.requests ?? []);
+  }
+
+  async function resendRequest(callId: string) {
+    setBusy(true);
+    const res = await api.resendRequest(callId);
+    setBusy(false);
+    if (res.error) {
+      notify(res.error, "error");
+      return;
+    }
+    notify("Queued for delivery");
+    if (requestsRow) {
+      const fresh = await api.requests(requestsRow.id);
+      setRequests(fresh.requests ?? []);
+    }
+    await refresh();
+  }
+
   async function openTranscript(row: Row) {
     setTranscriptRow(row);
     setTranscript(null);
@@ -262,5 +287,6 @@ export function useCabinet() {
     settings, settingsOpen, openSettings, docsOpen, openDocs, closeDocs: () => setDocsOpen(false), closeSettings: () => setSettingsOpen(false),
     saveCrm, saveWr, rotateKey, testCrm: api.testCrm, resend, pushAgain,
     transcriptRow, transcript, transcriptBusy, openTranscript, closeTranscript: () => setTranscriptRow(null),
+    requestsRow, requests, openRequests, closeRequests: () => setRequestsRow(null), resendRequest,
   };
 }
