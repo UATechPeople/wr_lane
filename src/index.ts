@@ -427,6 +427,17 @@ const api = new Elysia({ prefix: "/api" })
 // Serve the pre-built React UI (run `bun run build:web` → dist/) as static files.
 // Pre-building runs the Tailwind plugin so utility classes are generated (the dev
 // fullstack server does this at runtime, but production bundling does not).
+const BUILD_EXAMPLE = { version: "0.3.1", commit: "219813e", builtAt: "2026-09-17T09:00:00Z" };
+
+const buildSchema = t.Object(
+  {
+    version: t.String(),
+    commit: t.Nullable(t.String()),
+    builtAt: t.Nullable(t.String()),
+  },
+  { examples: [BUILD_EXAMPLE] },
+);
+
 const app = new Elysia()
   .use(
     openapi({
@@ -442,7 +453,7 @@ const app = new Elysia()
         tags: [
           { name: "Players", description: "Your CRM → cabinet. Authenticate with the inbound key from Settings." },
           { name: "WinRiders", description: "WinRiders → cabinet. Authenticate with the core key from Settings." },
-          { name: "Service", description: "Liveness and build info. No authentication." },
+          { name: "Service", description: "Monitoring. No authentication." },
         ],
         webhooks: {
           callResult: {
@@ -492,9 +503,27 @@ const app = new Elysia()
     }),
   )
   .get("/health", () => ({ ok: true, count: countNumbers(), clientPrefix: config.clientPrefix ?? null, build: buildInfo }), {
-    detail: { tags: ["Service"], summary: "Liveness" },
+    response: {
+      200: t.Object(
+        {
+          ok: t.Boolean(),
+          count: t.Number({ description: "Numbers stored in the cabinet." }),
+          clientPrefix: t.Nullable(t.String({ description: "Routing prefix this cabinet is configured with." })),
+          build: buildSchema,
+        },
+        { examples: [{ ok: true, count: 146, clientPrefix: "123000", build: BUILD_EXAMPLE }] },
+      ),
+    },
+    detail: {
+      tags: ["Service"],
+      summary: "Health",
+      description: "Answers 200 while the cabinet can reach its database. Use it for uptime checks; the count tells you the base is the one you expect.",
+    },
   })
-  .get("/version", () => buildInfo, { detail: { tags: ["Service"], summary: "Build info" } })
+  .get("/version", () => buildInfo, {
+    response: { 200: buildSchema },
+    detail: { tags: ["Service"], summary: "Version", description: "Which build is running. Compare with the archive name after an update." },
+  })
   .use(hooks)
   .use(api)
   .use(staticPlugin({ assets: "dist", prefix: "/", indexHTML: true }))
