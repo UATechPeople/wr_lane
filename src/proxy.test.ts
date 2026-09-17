@@ -7,7 +7,7 @@ process.env.DB_PATH = "/tmp/hn-proxy-test.sqlite";
 rmSync(process.env.DB_PATH, { force: true });
 
 const { resultForOutcome } = await import("./status");
-const { buildResultBody, parsePayload, crmConfigSchema, DEFAULT_CRM_CONFIG, resolveCrmUrl, isWebhookId } = await import("./webhook");
+const { buildResultBody, parsePayload, crmConfigSchema, DEFAULT_CRM_CONFIG } = await import("./webhook");
 const { backoffSeconds } = await import("./outbox");
 const {
   outboxEnqueue,
@@ -432,44 +432,11 @@ describe("winriders connection seeding", () => {
   });
 });
 
-describe("per-campaign result routing", () => {
-  const config = crmConfigSchema.parse({
-    url: "https://fallback.example/hook",
-    urlTemplate: "https://api-eu.customer.io/v1/webhook/{id}",
-  });
-
-  test("builds the address from the webhook id carried by the record", () => {
-    expect(resolveCrmUrl(config, "4b3bf9c2afab5dek")).toBe("https://api-eu.customer.io/v1/webhook/4b3bf9c2afab5dek");
-  });
-
-  test("falls back to the shared address when the record has no id", () => {
-    expect(resolveCrmUrl(config, null)).toBe("https://fallback.example/hook");
-  });
-
-  test("refuses an id that could bend the address", () => {
-    expect(isWebhookId("../../evil")).toBe(false);
-    expect(isWebhookId("host.example/path")).toBe(false);
-    expect(isWebhookId("4b3bf9c2afab5dek")).toBe(true);
-    expect(resolveCrmUrl(config, "../../evil")).toBe("https://fallback.example/hook");
-  });
-
-  test("without a template every record goes to the shared address", () => {
-    const plain = crmConfigSchema.parse({ url: "https://fallback.example/hook" });
-    expect(resolveCrmUrl(plain, "4b3bf9c2afab5dek")).toBe("https://fallback.example/hook");
-  });
-
-  test("a template must be a url carrying the placeholder", () => {
-    expect(crmConfigSchema.safeParse({ urlTemplate: "https://api-eu.customer.io/v1/webhook/" }).success).toBe(false);
-    expect(crmConfigSchema.safeParse({ urlTemplate: "api-eu.customer.io/{id}" }).success).toBe(false);
-    expect(crmConfigSchema.safeParse({ urlTemplate: "https://api-eu.customer.io/v1/webhook/{id}" }).success).toBe(true);
-  });
-});
-
 describe("outbox keeps its own target", () => {
   test("a queued result remembers where it must go", () => {
     const phone = "+38095" + String(Date.now()).slice(-7);
     const token = encryptPhone(phone);
-    insertNumbers(uploadIdByLabel("routing-test"), [{ real: phone, token, webhook_id: "camp42" }]);
+    insertNumbers(uploadIdByLabel("routing-test"), [{ real: phone, token }]);
     const row = getByToken(token)!;
     const key = "route-" + Date.now();
     expect(outboxEnqueue(row.id, key, { hello: "world" }, "https://api-eu.customer.io/v1/webhook/camp42", "call-42")).toBe(true);
@@ -477,7 +444,6 @@ describe("outbox keeps its own target", () => {
     expect(claimed).toHaveLength(1);
     expect(claimed[0].url).toBe("https://api-eu.customer.io/v1/webhook/camp42");
     expect(claimed[0].call_id).toBe("call-42");
-    expect(getByToken(token)!.webhook_id).toBe("camp42");
     outboxMarkDelivered(claimed[0].id);
   });
 });

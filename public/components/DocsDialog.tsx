@@ -13,7 +13,7 @@ const INBOUND_FIELDS: Field[] = [
   { name: "country", type: "string", note: "Optional ISO-3166 alpha-2, e.g. UA. Anything else is dropped." },
   { name: "language", type: "string", note: "Optional, 2–8 characters, e.g. uk." },
   { name: "segment", type: "string", note: "Optional. Overrides the default segment for this record." },
-  { name: "cohort", type: "string", note: "Optional. Together with segment picks the WinRiders campaign, e.g. welcome or reactivation." },
+  { name: "cohort", type: "string", note: "Optional. Together with segment picks the WinRiders campaign, e.g. deau1." },
   { name: "webhook_url", type: "string", note: "Optional. Where the result for this very request must be posted. Overrides the addresses in Settings." },
   { name: "payload", type: "object", note: "Optional. Anything you want back with the result — returned untouched. If it carries user_id, that is used as the person's id." },
 ];
@@ -139,17 +139,17 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
   -d '{
     "phone": "+380958145553",
     "segment": "hidden",
-    "cohort": "welcome",
+    "cohort": "deau1",
     "webhook_url": "https://api-eu.customer.io/v1/webhook/764e97035ef6a03e",
-    "payload": { "user_id": "12345", "brand": "starz" }
+    "payload": { "a": "b", "user_id": "12345" }
   }'`}</Code>
           <p className="text-sm text-neutral-600">Or a batch:</p>
           <Code>{`curl -X POST ${origin}/hook/players \\
   -H "Authorization: Bearer ${inbound}" \\
   -H "Content-Type: application/json" \\
   -d '[
-    { "phone": "+380958145553", "cohort": "welcome", "payload": { "user_id": "12345" } },
-    { "phone": "+380501112233", "cohort": "reactivation", "payload": { "user_id": "12346" } }
+    { "phone": "+380958145553", "segment": "hidden", "cohort": "deau1", "payload": { "a": "b", "user_id": "12345" } },
+    { "phone": "+380501112233", "segment": "hidden", "cohort": "nl1", "payload": { "a": "b", "user_id": "12346" } }
   ]'`}</Code>
           <p className="text-sm text-neutral-600">Answer — 202, with one row per record:</p>
           <Code>{`{
@@ -168,39 +168,17 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
           </p>
         </Section>
 
-        <Section title="3. Sending results to several campaigns">
-          <p className="text-sm text-neutral-600">
-            The simplest way is <code className="rounded bg-neutral-100 px-1 font-mono text-xs">webhook_url</code> in the request —
-            the result of that call goes exactly there. Alternatively put the campaign's webhook id at the end of the address you send
-            players to; the cabinet remembers it and builds the return address from the template in Settings.
-          </p>
-          <Code>{`curl -X POST ${origin}/hook/players/4b3bf9c2afab5dek \\
-  -H "Authorization: Bearer ${inbound}" \\
-  -H "Content-Type: application/json" \\
-  -d '{ "phone": "+380958145553", "user_id": "12345" }'`}</Code>
-          <p className="text-sm text-neutral-600">
-            The address itself is built from the template in Settings → Your CRM endpoint, where{" "}
-            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">{"{id}"}</code> is replaced by the id you sent:
-          </p>
-          <Code>{`template:  https://api-eu.customer.io/v1/webhook/{id}
-result to: https://api-eu.customer.io/v1/webhook/4b3bf9c2afab5dek`}</Code>
-          <p className="text-sm text-neutral-600">
-            The key stays the same for every campaign — only the end of the address changes. Players sent without an id come back to
-            the single address in the settings.
-          </p>
-        </Section>
-
-        <Section title="4. What your CRM receives">
+        <Section title="3. What your CRM receives">
           <p className="text-sm text-neutral-600">One POST per call, to the request's webhook_url or the address from Settings:</p>
           <Code>{`POST https://api-eu.customer.io/v1/webhook/764e97035ef6a03e
 Authorization: Bearer <your key>
 Content-Type: application/json
 
 {
-  "phone": "+380958145553",
-  "call_id": "5f0c1e4a-6d3f-4b2b-9a1e-8d2c3b4a5f60",
-  "result": "send_sms",
-  "payload": { "user_id": "12345", "brand": "starz" }
+  "phone": "+31612345678",
+  "call_id": "5d8982cd-8220-4f97-ac7d-452dbd01f630",
+  "result": "no_answer",
+  "payload": { "a": "b", "user_id": "12345" }
 }`}</Code>
           <p className="text-sm text-neutral-600">
             <code className="rounded bg-neutral-100 px-1 font-mono text-xs">phone</code> is the decrypted real number,{" "}
@@ -209,7 +187,7 @@ Content-Type: application/json
           </p>
         </Section>
 
-        <Section title="5. Call results">
+        <Section title="4. Call results">
           <div className="overflow-hidden rounded-lg border border-neutral-200">
             <table className="w-full text-left text-xs">
               <thead className="bg-neutral-50 text-neutral-500">
@@ -230,7 +208,7 @@ Content-Type: application/json
           </div>
         </Section>
 
-        <Section title="6. Delivery guarantees">
+        <Section title="5. Delivery guarantees">
           <p className="text-sm text-neutral-600">
             Answer with any 2xx and we consider it delivered. Anything else is retried automatically: after 30 seconds, then one
             minute, doubling up to an hour, twelve attempts in total. A result is never sent twice for the same call, and every row in
@@ -239,7 +217,7 @@ Content-Type: application/json
           <p className="text-sm text-neutral-600">If your CRM is down, nothing is lost — results queue up and go out when it returns.</p>
         </Section>
 
-        <Section title="7. Importing and exporting by file">
+        <Section title="6. Importing and exporting by file">
           <p className="text-sm text-neutral-600">
             CSV or Excel through “Add numbers”. A <code className="rounded bg-neutral-100 px-1 font-mono text-xs">phone</code> column is
             required; the rest are optional and match the fields above. If your headers differ you map them by hand during the upload.
@@ -249,7 +227,7 @@ Content-Type: application/json
           </p>
         </Section>
 
-        <Section title="8. Errors">
+        <Section title="7. Errors">
           <FieldTable
             fields={[
               { name: "401", type: "unauthorized", note: "Wrong key. Check the Authorization header against Settings." },
@@ -260,7 +238,7 @@ Content-Type: application/json
           />
         </Section>
 
-        <Section title="9. For the WinRiders side">
+        <Section title="8. For the WinRiders side">
           <p className="text-sm text-neutral-600">Point the campaign webhook at this cabinet with the second key:</p>
           <Code>{`url:  ${origin}/hook/call-result
 auth: Bearer ${core}`}</Code>
