@@ -145,6 +145,8 @@ export type NumberRow = {
   delivery_status: string | null;
   delivered_at: string | null;
   delivery_error: string | null;
+  requests_count: number;
+  last_activity: string;
 };
 
 export type NewNumber = {
@@ -164,7 +166,9 @@ export type NewNumber = {
 export type UploadRow = { id: number; label: string; created_at: string; count: number };
 
 const COLS =
-  "id, upload_id, real, token, user_id, webhook_id, external_id, first_name, last_name, country, language, segment, cohort, created_at, pushed_at, outcome, result, call_attempts, result_at, delivery_status, delivered_at, delivery_error";
+  "id, upload_id, real, token, user_id, webhook_id, external_id, first_name, last_name, country, language, segment, cohort, created_at, pushed_at, outcome, result, call_attempts, result_at, delivery_status, delivered_at, delivery_error, " +
+  "(SELECT COUNT(*) FROM requests r WHERE r.number_id = numbers.id) AS requests_count, " +
+  "COALESCE((SELECT MAX(COALESCE(r.result_at, r.created_at)) FROM requests r WHERE r.number_id = numbers.id), numbers.created_at) AS last_activity";
 
 export function createUpload(label: string): number {
   return Number(db.prepare("INSERT INTO uploads (label) VALUES (?)").run(label).lastInsertRowid);
@@ -250,7 +254,7 @@ function filterClause(q?: string, uploadId?: number): { sql: string; params: unk
 export function listNumbers(limit = 50, offset = 0, q?: string, uploadId?: number): NumberRow[] {
   const w = filterClause(q, uploadId);
   return db
-    .query(`SELECT ${COLS} FROM numbers${w.sql} ORDER BY id DESC LIMIT ? OFFSET ?`)
+    .query(`SELECT ${COLS} FROM numbers${w.sql} ORDER BY last_activity DESC, id DESC LIMIT ? OFFSET ?`)
     .all(...(w.params as any[]), limit, offset) as NumberRow[];
 }
 

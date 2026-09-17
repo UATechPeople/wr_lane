@@ -10,6 +10,7 @@ import { EditDialog } from "./components/EditDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { TranscriptDialog } from "./components/TranscriptDialog";
+import { RequestsDialog } from "./components/RequestsDialog";
 import { DocsDialog } from "./components/DocsDialog";
 import { Toast } from "./components/Toast";
 import type { BuildInfo } from "./lib/api";
@@ -78,7 +79,7 @@ export function Cabinet({
             <div className="mb-3">
               <SearchInput value={c.search} onChange={c.changeSearch} />
             </div>
-            <BaseTable rows={c.rows} searching={!!c.search} onEdit={c.openEdit} onDelete={c.askDeleteContact} onResend={c.resend} onPushAgain={c.pushAgain} onTranscript={c.openTranscript} />
+            <BaseTable rows={c.rows} searching={!!c.search} onEdit={c.openEdit} onDelete={c.askDeleteContact} onResend={c.resend} onPushAgain={c.pushAgain} onTranscript={c.openTranscript} onRequests={c.openRequests} />
             <Pager page={c.page} pages={c.pages} total={c.total} pageSize={c.pageSize} onPage={c.setPage} />
           </div>
         </div>
@@ -111,6 +112,7 @@ export function Cabinet({
       />
       <DocsDialog open={c.docsOpen} settings={c.settings} onClose={c.closeDocs} />
       <TranscriptDialog row={c.transcriptRow} data={c.transcript} busy={c.transcriptBusy} onClose={c.closeTranscript} />
+      <RequestsDialog row={c.requestsRow} requests={c.requests} busy={c.busy} onClose={c.closeRequests} onResend={c.resendRequest} />
       <Toast toast={c.toast} onClose={c.dismissToast} />
     </div>
   );

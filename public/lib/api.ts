@@ -11,6 +11,28 @@ export type Row = {
   result: string | null;
   delivery_status: string | null;
   delivery_error: string | null;
+  requests_count: number;
+  last_activity: string;
+};
+
+export type RequestRow = {
+  call_id: string;
+  webhook_url: string | null;
+  payload: string | null;
+  segment: string | null;
+  cohort: string | null;
+  created_at: string;
+  pushed_at: string | null;
+  push_error: string | null;
+  push_attempts: number;
+  lead_id: string | null;
+  campaign_id: string | null;
+  outcome: string | null;
+  result: string | null;
+  result_at: string | null;
+  delivery_status: string | null;
+  delivered_at: string | null;
+  delivery_error: string | null;
 };
 
 export type TranscriptCall = {
@@ -154,6 +176,9 @@ export const api = {
   testCrm: (): Promise<TestResult> => fetch("/api/settings/test", { method: "POST" }).then(json),
   resend: (id: number): Promise<{ queued?: boolean; error?: string }> =>
     fetch(`/api/numbers/${id}/resend`, { method: "POST" }).then(json),
+  requests: (id: number): Promise<{ requests: RequestRow[]; error?: string }> => fetch(`/api/numbers/${id}/requests`).then(json),
+  resendRequest: (callId: string): Promise<{ queued?: boolean; error?: string }> =>
+    fetch(`/api/requests/${callId}/resend`, { method: "POST" }).then(json),
   pushAgain: (id: number): Promise<{ sent?: number; failed?: number; error?: string }> =>
     fetch(`/api/numbers/${id}/push`, { method: "POST" }).then(json),
 

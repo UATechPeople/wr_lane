@@ -43,6 +43,7 @@ export function BaseTable({
   onDelete,
   onResend,
   onPushAgain,
+  onRequests,
   onTranscript,
 }: {
   rows: Row[];
@@ -52,13 +53,14 @@ export function BaseTable({
   onResend: (r: Row) => void;
   onPushAgain: (r: Row) => void;
   onTranscript: (r: Row) => void;
+  onRequests: (r: Row) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
       <table className="w-full table-auto text-left text-sm">
         <thead className="border-b border-neutral-200 bg-neutral-50">
           <tr>
-            {["Real", "Token", "User ID", "Result", "Delivery", "Pushed"].map((h) => (
+            {["Real", "Token", "User ID", "Calls", "Last result", "Delivery", "Pushed", "Last activity"].map((h) => (
               <th key={h} className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 {h}
               </th>
@@ -72,6 +74,15 @@ export function BaseTable({
               <td className="whitespace-nowrap px-4 py-3 font-mono text-neutral-800">{r.real}</td>
               <td className="whitespace-nowrap px-4 py-3 font-mono text-neutral-500">{r.token}</td>
               <td className="whitespace-nowrap px-4 py-3 text-neutral-600">{r.user_id ?? <span className="text-neutral-300">—</span>}</td>
+              <td className="whitespace-nowrap px-4 py-3">
+                <button
+                  onClick={() => onRequests(r)}
+                  title="Every call requested for this number, newest first"
+                  className="rounded-lg border border-neutral-200 px-2 py-0.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100"
+                >
+                  {r.requests_count}
+                </button>
+              </td>
               <td className="whitespace-nowrap px-4 py-3">
                 {r.result ? (
                   <StatusBadge label={r.result} tone="info" dot={false} />
@@ -94,6 +105,9 @@ export function BaseTable({
               </td>
               <td className="whitespace-nowrap px-4 py-3">
                 {r.pushed_at ? <StatusBadge label="sent" tone="success" /> : <span className="text-neutral-300">—</span>}
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-neutral-500" title="Last request created or last result received (UTC)">
+                {r.last_activity.replace("T", " ").slice(0, 16)}
               </td>
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex items-center justify-end gap-0.5">
