@@ -14,6 +14,7 @@ import {
   insertNumbers,
   listNumbers,
   getNumber,
+  markPushed,
   updateNumber,
   deleteNumber,
   allRecords,
@@ -21,7 +22,7 @@ import {
   type NewNumber,
 } from "./db";
 import { toCoreCsv } from "./csv";
-import { fetchLeadTranscript, retryPushes, startPushRetryCron } from "./platform";
+import { fetchLeadTranscript, pushRequests, retryPushes, startPushRetryCron } from "./platform";
 import { parseRecords, previewFile, type UploadRecord, type HeaderMap } from "./upload";
 import { hooks } from "./hooks";
 import { drainOutbox, startOutboxCron } from "./outbox";
@@ -43,6 +44,7 @@ import {
   outboxRequeueForCall,
   outboxRequeueForNumber,
   requestsForNumber,
+  resetPushSchedule,
   setDeliveryState,
   setRequestDeliveryState,
 } from "./db";
@@ -401,6 +403,28 @@ const api = new Elysia({ prefix: "/api" })
       return { error: "not found" };
     }
     return { requests: requestsForNumber(id) };
+  })
+
+  .post("/numbers/:id/push", async ({ params, set }) => {
+    const id = Number(params.id);
+    if (!getNumber(id)) {
+      set.status = 404;
+      return { error: "not found" };
+    }
+    const pending = resetPushSchedule(id);
+    if (pending.length === 0) {
+      set.status = 409;
+      return { error: "every request for this number already reached Platform" };
+    }
+    try {
+      const results = await pushRequests(pending);
+      const sent = results.filter((r) => r.ok).length;
+      if (sent > 0) markPushed([results[0].token]);
+      return { sent, failed: results.length - sent, error: results.find((r) => !r.ok)?.error };
+    } catch (e) {
+      set.status = 400;
+      return { error: String((e as Error).message) };
+    }
   })
 
   .post("/outbox/drain", () => drainOutbox())

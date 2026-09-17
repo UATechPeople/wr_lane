@@ -519,6 +519,13 @@ export function markRequestPushAbandoned(callId: string, error: string, maxAttem
   db.prepare("UPDATE requests SET push_error = ?, push_attempts = ?, next_push_at = NULL WHERE call_id = ?").run(error, maxAttempts, callId);
 }
 
+export function resetPushSchedule(numberId: number): RequestRow[] {
+  db.prepare("UPDATE requests SET push_attempts = 0, next_push_at = NULL WHERE number_id = ? AND pushed_at IS NULL").run(numberId);
+  return db
+    .query(`SELECT ${REQUEST_COLS} FROM requests WHERE number_id = ? AND pushed_at IS NULL ORDER BY created_at, rowid`)
+    .all(numberId) as RequestRow[];
+}
+
 export function duePushRequests(maxAttempts: number, limit = 50): RequestRow[] {
   return db
     .query(

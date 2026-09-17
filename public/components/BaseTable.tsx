@@ -14,6 +14,7 @@ export function BaseTable({
   onEdit,
   onDelete,
   onResend,
+  onPushAgain,
   onTranscript,
 }: {
   rows: Row[];
@@ -21,6 +22,7 @@ export function BaseTable({
   onEdit: (r: Row) => void;
   onDelete: (r: Row) => void;
   onResend: (r: Row) => void;
+  onPushAgain: (r: Row) => void;
   onTranscript: (r: Row) => void;
 }) {
   return (
@@ -78,12 +80,19 @@ export function BaseTable({
                 {r.delivery_status && (
                   <button
                     onClick={() => onResend(r)}
-                    title={r.delivery_error ?? "Send this result to your CRM again"}
+                    title={r.delivery_error ?? "Post the call result to your CRM again"}
                     className="mr-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-brand-700 transition hover:bg-brand-50"
                   >
-                    resend
+                    resend to CRM
                   </button>
                 )}
+                <button
+                  onClick={() => onPushAgain(r)}
+                  title="Send the requests for this number to Platform again — only those that never got through"
+                  className="mr-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-brand-700 transition hover:bg-brand-50"
+                >
+                  push to Platform
+                </button>
                 <button
                   onClick={() => onEdit(r)}
                   className="mr-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100"
