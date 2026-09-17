@@ -50,9 +50,6 @@ export type Settings = {
   wr: WrConfig;
   inboundKey: string | null;
   coreKey: string | null;
-  wrTargetFields: string[];
-  wrSourceFields: string[];
-  tokenOnlyTargets: string[];
   defaults: CrmConfig;
 };
 
