@@ -78,7 +78,7 @@ export function Cabinet({
             <div className="mb-3">
               <SearchInput value={c.search} onChange={c.changeSearch} />
             </div>
-            <BaseTable rows={c.rows} searching={!!c.search} onEdit={c.openEdit} onDelete={c.askDeleteContact} onResend={c.resend} onTranscript={c.openTranscript} />
+            <BaseTable rows={c.rows} searching={!!c.search} onEdit={c.openEdit} onDelete={c.askDeleteContact} onResend={c.resend} onPushAgain={c.pushAgain} onTranscript={c.openTranscript} />
             <Pager page={c.page} pages={c.pages} total={c.total} pageSize={c.pageSize} onPage={c.setPage} />
           </div>
         </div>

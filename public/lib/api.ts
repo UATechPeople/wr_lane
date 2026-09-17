@@ -154,6 +154,8 @@ export const api = {
   testCrm: (): Promise<TestResult> => fetch("/api/settings/test", { method: "POST" }).then(json),
   resend: (id: number): Promise<{ queued?: boolean; error?: string }> =>
     fetch(`/api/numbers/${id}/resend`, { method: "POST" }).then(json),
+  pushAgain: (id: number): Promise<{ sent?: number; failed?: number; error?: string }> =>
+    fetch(`/api/numbers/${id}/push`, { method: "POST" }).then(json),
 
   patch: (id: number, body: Record<string, string>): Promise<Row & { error?: string }> =>
     fetch(`/api/numbers/${id}`, {

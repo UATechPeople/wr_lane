@@ -226,6 +226,18 @@ export function useCabinet() {
     notify("New key generated");
   }
 
+  async function pushAgain(row: Row) {
+    setBusy(true);
+    const res = await api.pushAgain(row.id);
+    setBusy(false);
+    if (res.error && !res.sent) {
+      notify(res.error, "error");
+      return;
+    }
+    await refresh();
+    notify(res.failed ? `Sent ${res.sent}, failed ${res.failed}: ${res.error}` : `Sent to WinRiders`, res.failed ? "info" : "success");
+  }
+
   async function resend(row: Row) {
     setBusy(true);
     const res = await api.resend(row.id);
@@ -248,7 +260,7 @@ export function useCabinet() {
     askDeleteContact, askDeleteUpload, closeConfirm: () => setConfirm(null), runConfirm,
     dismissToast: () => setToast(null),
     settings, settingsOpen, openSettings, docsOpen, openDocs, closeDocs: () => setDocsOpen(false), closeSettings: () => setSettingsOpen(false),
-    saveCrm, saveWr, rotateKey, testCrm: api.testCrm, resend,
+    saveCrm, saveWr, rotateKey, testCrm: api.testCrm, resend, pushAgain,
     transcriptRow, transcript, transcriptBusy, openTranscript, closeTranscript: () => setTranscriptRow(null),
   };
 }
