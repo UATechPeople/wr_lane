@@ -1,7 +1,7 @@
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
 import type { ReactNode } from "react";
 
-const SIZES = { md: "max-w-md", lg: "max-w-2xl" } as const;
+const SIZES = { md: "max-w-md", lg: "max-w-4xl" } as const;
 
 export function Modal({
   open,

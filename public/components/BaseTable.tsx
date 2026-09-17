@@ -1,5 +1,30 @@
+import { CloudArrowUpIcon, DocumentTextIcon, PaperAirplaneIcon, PencilSquareIcon, TrashIcon } from "@heroicons/react/24/outline";
 import type { Row } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
+
+function Action({
+  title,
+  onClick,
+  tone = "neutral",
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  tone?: "neutral" | "brand" | "danger";
+  children: React.ReactNode;
+}) {
+  const color =
+    tone === "danger"
+      ? "text-red-500 hover:bg-red-50 hover:text-red-700"
+      : tone === "brand"
+        ? "text-brand-600 hover:bg-brand-50 hover:text-brand-800"
+        : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-800";
+  return (
+    <button onClick={onClick} title={title} aria-label={title} className={`rounded-lg p-1.5 transition ${color}`}>
+      {children}
+    </button>
+  );
+}
 
 const DELIVERY_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
   delivered: "success",
@@ -67,44 +92,30 @@ export function BaseTable({
               <td className="whitespace-nowrap px-4 py-3">
                 {r.pushed_at ? <StatusBadge label="sent" tone="success" /> : <span className="text-neutral-300">—</span>}
               </td>
-              <td className="px-4 py-3 text-right whitespace-nowrap">
-                {r.external_id && (
-                  <button
-                    onClick={() => onTranscript(r)}
-                    title="Show the conversation from Platform"
-                    className="mr-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100"
-                  >
-                    transcript
-                  </button>
-                )}
-                {r.delivery_status && (
-                  <button
-                    onClick={() => onResend(r)}
-                    title={r.delivery_error ?? "Post the call result to your CRM again"}
-                    className="mr-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-brand-700 transition hover:bg-brand-50"
-                  >
-                    resend to CRM
-                  </button>
-                )}
-                <button
-                  onClick={() => onPushAgain(r)}
-                  title="Send the requests for this number to Platform again — only those that never got through"
-                  className="mr-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-brand-700 transition hover:bg-brand-50"
-                >
-                  push to Platform
-                </button>
-                <button
-                  onClick={() => onEdit(r)}
-                  className="mr-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100"
-                >
-                  edit
-                </button>
-                <button
-                  onClick={() => onDelete(r)}
-                  className="rounded-lg px-2.5 py-1 text-xs font-semibold text-red-600 transition hover:bg-red-50"
-                >
-                  delete
-                </button>
+              <td className="px-4 py-3 whitespace-nowrap">
+                <div className="flex items-center justify-end gap-0.5">
+                  {r.external_id && (
+                    <Action title="Conversation from Platform" onClick={() => onTranscript(r)}>
+                      <DocumentTextIcon className="h-4 w-4" />
+                    </Action>
+                  )}
+                  {r.delivery_status && r.delivery_status !== "delivered" && (
+                    <Action title={`Post the result to your CRM again${r.delivery_error ? ` — last error: ${r.delivery_error}` : ""}`} onClick={() => onResend(r)} tone="brand">
+                      <PaperAirplaneIcon className="h-4 w-4" />
+                    </Action>
+                  )}
+                  {!r.pushed_at && (
+                    <Action title="Send this number to Platform again" onClick={() => onPushAgain(r)} tone="brand">
+                      <CloudArrowUpIcon className="h-4 w-4" />
+                    </Action>
+                  )}
+                  <Action title="Edit" onClick={() => onEdit(r)}>
+                    <PencilSquareIcon className="h-4 w-4" />
+                  </Action>
+                  <Action title="Delete" onClick={() => onDelete(r)} tone="danger">
+                    <TrashIcon className="h-4 w-4" />
+                  </Action>
+                </div>
               </td>
             </tr>
           ))}
