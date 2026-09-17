@@ -6,16 +6,11 @@ import type { Settings } from "../lib/api";
 type Field = { name: string; type: string; required?: boolean; note: string };
 
 const INBOUND_FIELDS: Field[] = [
-  { name: "phone", type: "string", required: true, note: "The real number in E.164, e.g. +447700900123. Never send a token here." },
-  { name: "user_id", type: "string", note: "Your own id for this person. Send it as a string — long numeric ids lose digits in JSON." },
-  { name: "first_name", type: "string", note: "Optional. Stays in the cabinet unless you map it through to Platform." },
-  { name: "last_name", type: "string", note: "Optional." },
-  { name: "country", type: "string", note: "Optional ISO-3166 alpha-2, e.g. UA. Anything else is dropped." },
-  { name: "language", type: "string", note: "Optional, 2–8 characters, e.g. uk." },
-  { name: "segment", type: "string", note: "Optional. Overrides the default segment for this record." },
-  { name: "cohort", type: "string", note: "Optional. Together with segment picks the Platform campaign, e.g. deau1." },
-  { name: "webhook_url", type: "string", note: "Optional. Where the result for this very request must be posted. Overrides the addresses in Settings." },
-  { name: "payload", type: "object", note: "Optional. Anything you want back with the result — returned untouched. If it carries user_id, that is used as the person's id." },
+  { name: "phone", type: "string", required: true, note: "The real number in E.164, e.g. +31612345678. Never send a token here." },
+  { name: "segment", type: "string", note: "Together with cohort selects the Platform campaign." },
+  { name: "cohort", type: "string", note: "Together with segment selects the Platform campaign, e.g. deau1." },
+  { name: "webhook_url", type: "string", note: "Where the result of this call must be posted." },
+  { name: "payload", type: "object", note: "Anything you want back with the result — returned untouched. Put user_id here." },
 ];
 
 const RESULTS: { result: string; meaning: string }[] = [
