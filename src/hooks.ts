@@ -16,7 +16,7 @@ import {
   type NewNumber,
   type RequestRow,
 } from "./db";
-import { buildResultBody, getCrmConfig, getCoreKey, getInboundKey, isWebhookId, parsePayload, resolveCrmUrl } from "./webhook";
+import { buildResultBody, getCrmConfig, getCoreKey, getInboundKey, parsePayload } from "./webhook";
 import { resultForOutcome } from "./status";
 import { pushRequests } from "./platform";
 
@@ -42,33 +42,38 @@ function guard(headers: Record<string, string | undefined>, expected: string | n
   return { ok: true };
 }
 
+const PLAYER_EXAMPLE = {
+  phone: "+31612345678",
+  segment: "hidden",
+  cohort: "deau1",
+  webhook_url: "https://crm.example.com/hooks/call-results",
+  payload: { a: "b", user_id: "12345" },
+};
+
 const playerSchema = t.Object(
   {
     phone: t.String({ description: "Real phone number in E.164. Never a token.", examples: ["+31612345678"] }),
-    user_id: t.Optional(
-      t.Union([t.String(), t.Number()], {
-        description: "Your id for this person. Prefer a string — long numeric ids lose digits in JSON. Falls back to payload.user_id.",
-      }),
-    ),
-    first_name: t.Optional(t.String({ maxLength: 128 })),
-    last_name: t.Optional(t.String({ maxLength: 128 })),
-    country: t.Optional(t.String({ description: "ISO-3166 alpha-2, e.g. NL. Anything else is dropped." })),
-    language: t.Optional(t.String({ description: "2–8 characters, e.g. nl." })),
-    segment: t.Optional(t.String({ description: "Geo or product segment. Together with cohort selects the Platform campaign.", examples: ["nl"] })),
-    cohort: t.Optional(t.String({ description: "Type of touch, e.g. welcome or reactivation.", examples: ["welcome"] })),
+    segment: t.Optional(t.String({ description: "Together with cohort selects the Platform campaign.", examples: ["hidden"] })),
+    cohort: t.Optional(t.String({ description: "Together with segment selects the Platform campaign.", examples: ["deau1"] })),
     webhook_url: t.Optional(
       t.String({
-        description: "Where the result of this very call must be posted. Overrides the addresses configured in the cabinet.",
+        description: "Where the result of this call must be posted.",
         examples: ["https://crm.example.com/hooks/call-results"],
       }),
     ),
-    payload: t.Optional(t.Any({ description: "Anything you want back with the result. Returned untouched." })),
+    payload: t.Optional(
+      t.Any({
+        description: "Anything you want back with the result. Returned untouched.",
+        examples: [{ a: "b", user_id: "12345" }],
+      }),
+    ),
   },
-  { description: "One player to call. Unknown fields are ignored.", additionalProperties: true },
+  { description: "One player to call.", examples: [PLAYER_EXAMPLE] },
 );
 
-const playersBody = t.Union([playerSchema, t.Array(playerSchema, { minItems: 1 })], {
+const playersBody = t.Union([playerSchema, t.Array(playerSchema, { minItems: 1, examples: [[PLAYER_EXAMPLE]] })], {
   description: "A single player or an array of them. Each element becomes a separate call with its own call_id.",
+  examples: [PLAYER_EXAMPLE],
 });
 
 const acceptedRowSchema = t.Object({
@@ -80,14 +85,35 @@ const acceptedRowSchema = t.Object({
   warning: t.Optional(t.String()),
 });
 
-const playersResponse = t.Object({
-  received: t.Integer(),
-  accepted: t.Integer({ description: "Rows that became calls and were sent to Platform." }),
-  pushed: t.Nullable(t.Object({ sent: t.Integer(), failed: t.Integer(), error: t.Optional(t.String()) })),
-  rows: t.Array(acceptedRowSchema),
-});
+const ACCEPTED_EXAMPLE = {
+  received: 1,
+  accepted: 1,
+  pushed: { sent: 1, failed: 0 },
+  rows: [{ phone: "+31612345678", token: "+913694993501880", call_id: "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", ok: true }],
+};
 
-const errorResponse = t.Object({ error: t.String() });
+const playersResponse = t.Object(
+  {
+    received: t.Number(),
+    accepted: t.Number({ description: "Rows that became calls and were sent to Platform." }),
+    pushed: t.Nullable(t.Object({ sent: t.Number(), failed: t.Number(), error: t.Optional(t.String()) })),
+    rows: t.Array(acceptedRowSchema),
+  },
+  { examples: [ACCEPTED_EXAMPLE] },
+);
+
+const errorResponse = t.Object({ error: t.String() }, { examples: [{ error: "unauthorized" }] });
+
+const CALL_RESULT_EXAMPLE = {
+  event: "call.lost",
+  campaignId: "4e5f6a7b-8c9d-4e0f-a1b2-c3d4e5f6a7b8",
+  leadId: "9d8c7b6a-5f4e-4d3c-b2a1-0f9e8d7c6b5a",
+  externalId: "client1:7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19",
+  outcome: "no_answer",
+  attempts: { call: 2, sms: 0 },
+  phone: "+913694993501880",
+  sentAt: "2026-09-16T12:00:00.000Z",
+};
 
 const callResultBody = t.Object(
   {
@@ -100,32 +126,30 @@ const callResultBody = t.Object(
     phone: t.Optional(t.Nullable(t.String({ description: "The token that was dialled." }))),
     sentAt: t.Optional(t.String()),
   },
-  { additionalProperties: true, description: "Body posted by a Platform flow-graph webhook node." },
+  { additionalProperties: true, description: "Body posted by a Platform flow-graph webhook node.", examples: [CALL_RESULT_EXAMPLE] },
 );
 
-const callResultResponse = t.Object({
-  received: t.Boolean(),
-  matched: t.Boolean(),
-  call_id: t.Optional(t.String()),
-  queued: t.Optional(t.Boolean({ description: "True when a result was put in the delivery queue to your CRM." })),
-  reason: t.Optional(t.String()),
-  error: t.Optional(t.String()),
-});
+const callResultResponse = t.Object(
+  {
+    received: t.Boolean(),
+    matched: t.Boolean(),
+    call_id: t.Optional(t.String()),
+    queued: t.Optional(t.Boolean({ description: "True when a result was put in the delivery queue to your CRM." })),
+    reason: t.Optional(t.String()),
+    error: t.Optional(t.String()),
+  },
+  { examples: [{ received: true, matched: true, call_id: "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", queued: true }] },
+);
 
 const INBOUND_DETAIL = {
   tags: ["Players"],
   security: [{ inboundKey: [] }],
   description:
-    "Send a player to be called. The number is encrypted into a token here; only the token leaves your infrastructure. Every request is a separate call with its own call_id, even for a number you have sent before. The result comes back to `webhook_url` from the request, or to the address configured in the cabinet, as `{ phone, call_id, result, payload }`.",
+    "Send a player to be called. The number is encrypted into a token here; only the token leaves your infrastructure. Every request is a separate call with its own call_id. The result comes back to `webhook_url` as `{ \"phone\": \"+31612345678\", \"call_id\": \"uuid\", \"result\": \"no_answer\", \"payload\": { \"a\": \"b\", \"user_id\": \"12345\" } }`.",
 };
 
 type PlayerInput = {
   phone: string;
-  user_id?: string | number;
-  first_name?: string;
-  last_name?: string;
-  country?: string;
-  language?: string;
   segment?: string;
   cohort?: string;
   webhook_url?: string;
@@ -177,7 +201,7 @@ type PlayersContext = {
 
 type Pending = { input: PlayerInput; token: string; userId?: string; webhookUrl: string | null };
 
-async function acceptPlayers({ body, headers, set }: PlayersContext, webhookId: string | null) {
+async function acceptPlayers({ body, headers, set }: PlayersContext) {
   const allowed = guard(headers, getInboundKey());
   if (!allowed.ok) {
     set.status = allowed.status;
@@ -198,7 +222,7 @@ async function acceptPlayers({ body, headers, set }: PlayersContext, webhookId: 
     if (input.webhook_url && validWebhookUrl(input.webhook_url) === null) {
       return { phone: input.phone, token: null, call_id: null, ok: false, error: "webhook_url must be an http(s) url" };
     }
-    const userId = normalizeUserId(input.user_id ?? payloadUserId(input.payload));
+    const userId = normalizeUserId(payloadUserId(input.payload));
     try {
       const token = encryptPhone(input.phone);
       pending.push({ input, token, userId: userId.value, webhookUrl: validWebhookUrl(input.webhook_url) });
@@ -213,11 +237,6 @@ async function acceptPlayers({ body, headers, set }: PlayersContext, webhookId: 
       real: input.phone,
       token,
       user_id: userId,
-      webhook_id: webhookId ?? undefined,
-      first_name: input.first_name,
-      last_name: input.last_name,
-      country: input.country,
-      language: input.language,
       segment: input.segment,
       cohort: input.cohort,
     }));
@@ -232,7 +251,6 @@ async function acceptPlayers({ body, headers, set }: PlayersContext, webhookId: 
     const request = insertRequest({
       call_id: crypto.randomUUID(),
       number_id: number.id,
-      webhook_id: webhookId,
       webhook_url: item.webhookUrl,
       payload: item.input.payload,
       segment: item.input.segment ?? null,
@@ -276,33 +294,11 @@ export function callIdFromExternalId(externalId: string | null | undefined): str
 }
 
 export const hooks = new Elysia({ prefix: "/hook" })
-  .post("/players", async (ctx) => acceptPlayers(ctx as PlayersContext, null), {
+  .post("/players", async (ctx) => acceptPlayers(ctx as PlayersContext), {
     body: playersBody,
     response: { 202: playersResponse, 401: errorResponse, 422: errorResponse, 503: errorResponse },
     detail: { ...INBOUND_DETAIL, summary: "Send players" },
   })
-  .post(
-    "/players/:webhookId",
-    async (ctx) => {
-      const { params, set } = ctx as PlayersContext & { params: { webhookId: string } };
-      if (!isWebhookId(params.webhookId)) {
-        set.status = 422;
-        return { error: "webhook id may only contain letters, digits, dashes and underscores" };
-      }
-      return acceptPlayers(ctx as PlayersContext, params.webhookId);
-    },
-    {
-      body: playersBody,
-      params: t.Object({
-        webhookId: t.String({
-          pattern: "^[A-Za-z0-9_-]{1,128}$",
-          description: "Your routing id, e.g. a brand or campaign. Substituted for {id} in the cabinet's URL template when the request carries no webhook_url.",
-        }),
-      }),
-      response: { 202: playersResponse, 401: errorResponse, 422: errorResponse, 503: errorResponse },
-      detail: { ...INBOUND_DETAIL, summary: "Send players tagged with a routing id" },
-    },
-  )
   .post(
     "/call-result",
     ({ body, headers, set }) => {
@@ -367,8 +363,7 @@ export const hooks = new Elysia({ prefix: "/hook" })
 
       if (!result) return { received: true, matched: true, call_id: request.call_id, queued: false, reason: "outcome is not mapped" };
 
-      const crm = getCrmConfig();
-      const url = request.webhook_url ?? resolveCrmUrl(crm, request.webhook_id);
+      const url = request.webhook_url ?? getCrmConfig().url;
       const dedupeKey = [request.call_id, payload.event, payload.outcome, attempts].join(":");
       const queued = outboxEnqueue(
         row.id,

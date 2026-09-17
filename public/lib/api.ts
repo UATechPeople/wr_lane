@@ -28,7 +28,6 @@ export type TranscriptCall = {
 export type Transcript = { available: boolean; calls: TranscriptCall[]; error?: string; leadId?: string };
 
 export type CrmConfig = {
-  urlTemplate: string;
   url: string;
   headers: Record<string, string>;
   timeoutMs: number;

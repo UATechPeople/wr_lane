@@ -188,16 +188,9 @@ export function SettingsDialog({
           <Input
             label="URL"
             value={draft.url}
-            hint="Used when a record carries no webhook id. Leave empty to stop sending — results keep queueing."
+            hint="Used when a request carries no webhook_url. Leave empty to stop sending — results keep queueing."
             placeholder="https://crm.example.com/hooks/call-result"
             onChange={(e) => patch({ url: e.target.value })}
-          />
-          <Input
-            label="URL template"
-            value={draft.urlTemplate}
-            hint="Send players to /hook/players/<webhook id> and the result goes to this address with {id} replaced."
-            placeholder="https://crm.example.com/hooks/{id}"
-            onChange={(e) => patch({ urlTemplate: e.target.value })}
           />
         </section>
 
@@ -239,10 +232,10 @@ export function SettingsDialog({
           <h3 className="text-sm font-semibold text-neutral-900">Result body</h3>
           <p className="text-xs text-neutral-500">
             Fixed shape. <code>payload</code> is returned exactly as your CRM sent it with the player; a request that
-            carried its own <code>webhook_url</code> is answered there instead of the addresses above.
+            carried its own <code>webhook_url</code> is answered there instead of the address above.
           </p>
           <pre className="overflow-x-auto rounded-lg bg-neutral-900 p-3 text-xs text-neutral-100">
-            {JSON.stringify({ phone: "+31612345678", call_id: "uuid", result: "no_answer", payload: { user_id: "12345" } }, null, 2)}
+            {JSON.stringify({ phone: "+31612345678", call_id: "uuid", result: "no_answer", payload: { a: "b", user_id: "12345" } }, null, 2)}
           </pre>
         </section>
 

@@ -444,6 +444,44 @@ const app = new Elysia()
           { name: "Platform", description: "Platform → cabinet. Authenticate with the core key from Settings." },
           { name: "Service", description: "Liveness and build info. No authentication." },
         ],
+        webhooks: {
+          callResult: {
+            post: {
+              tags: ["Players"],
+              summary: "Call result delivered to your CRM",
+              description:
+                "Sent by the cabinet to the `webhook_url` of the request once Platform reports the outcome of the call. `phone` is the real number, `call_id` is the one you received when you sent the player, `payload` is returned exactly as you sent it. Answer 2xx; anything else is retried with a growing delay, twelve attempts in total.",
+              requestBody: {
+                required: true,
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      required: ["phone", "call_id", "result", "payload"],
+                      properties: {
+                        phone: { type: "string", description: "Real phone number in E.164.", example: "+31612345678" },
+                        call_id: { type: "string", format: "uuid", example: "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19" },
+                        result: {
+                          type: "string",
+                          enum: ["send_sms", "no_answer", "voicemail", "busy", "hang_up", "not_interested", "failed_call", "blacklist"],
+                          example: "no_answer",
+                        },
+                        payload: { description: "Whatever you sent with the player, untouched.", example: { a: "b", user_id: "12345" } },
+                      },
+                      example: {
+                        phone: "+31612345678",
+                        call_id: "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19",
+                        result: "no_answer",
+                        payload: { a: "b", user_id: "12345" },
+                      },
+                    },
+                  },
+                },
+              },
+              responses: { "200": { description: "Accepted by your CRM. Any 2xx status counts." } },
+            },
+          },
+        },
         components: {
           securitySchemes: {
             inboundKey: { type: "apiKey", in: "header", name: "x-api-key", description: "Inbound key. `Authorization: Bearer <key>` is accepted too." },
