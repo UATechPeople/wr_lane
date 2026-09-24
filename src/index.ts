@@ -1,30 +1,48 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHash, createHmac } from "crypto";
 import { Elysia, t } from "elysia";
 import { staticPlugin } from "@elysiajs/static";
 import { openapi } from "@elysiajs/openapi";
 import { config } from "./config";
+import { checkKeysAgainstBase, initKeys, keys, writeSharedDecryptKey } from "./keys";
+import { enabledModes, getTelephony, importLegacyTelephony, TRUNK_MODES, type TrunkMode } from "./telephony";
+import { changeTrunkKeyAndSync, getCoreState, registerWithCore } from "./core";
+import { changeDecryptKey, changeEncryptionKeys, changeLogin, decryptKeyPending, encryptionKeysInfo, exportKeysEnv } from "./key-settings";
+import { secretEquals } from "./equals";
+import { internalFetch } from "./internal";
 import { buildInfo } from "./version";
-import { encryptPhone, decryptToken } from "./fpe";
+import { encryptPhone, decryptToken, looksLikeToken } from "./fpe";
 import {
-  createUpload,
   listUploads,
   getUpload,
   deleteUpload,
   rowsForUpload,
-  insertNumbers,
   listNumbers,
   getNumber,
-  markPushed,
   updateNumber,
   deleteNumber,
   allRecords,
   countNumbers,
+  batchErrors,
+  getBatch,
+  listBatches,
+  retryAbandonedInBatch,
   type NewNumber,
 } from "./db";
 import { toCoreCsv } from "./csv";
-import { fetchLeadTranscript, pushRequests, retryPushes, startPushRetryCron } from "./platform";
+import {
+  fetchLeadTranscript,
+  getPushRate,
+  kickPushWorker,
+  PUSH_MAX_ATTEMPTS,
+  pushQueueHealth,
+  pushRequests,
+  retryPushes,
+  setPushRate,
+  startPushWorkerCron,
+} from "./platform";
 import { parseRecords, previewFile, type UploadRecord, type HeaderMap } from "./upload";
-import { hooks } from "./hooks";
+import { hooks, STREAM_LABEL } from "./hooks";
+import { ingestRecords, sendUpload } from "./uploads";
 import { drainOutbox, startOutboxCron } from "./outbox";
 import { sendToCrm } from "./crm";
 import {
@@ -49,40 +67,32 @@ import {
   setRequestDeliveryState,
 } from "./db";
 
+function boot(): void {
+  try {
+    const started = initKeys(process.env);
+    for (const name of started.imported) console.log(`[hidden-numbers] imported ${name} from the environment`);
+    for (const name of started.generated) console.log(`[hidden-numbers] generated ${name}`);
+    for (const name of started.ignoredEnv) console.warn(`[hidden-numbers] ${name} in the environment differs from the stored value and is ignored`);
+    const check = checkKeysAgainstBase(encryptPhone, looksLikeToken);
+    if (check.mismatched > 0) {
+      throw new Error(`the FF3 key does not reproduce ${check.mismatched} of ${check.checked} stored tokens; refusing to start so no call reaches the wrong person`);
+    }
+    const legacyModes = importLegacyTelephony(process.env);
+    if (legacyModes.length > 0) console.log(`[hidden-numbers] imported trunk modes from the environment: ${legacyModes.join(", ")}`);
+    const sharedKey = writeSharedDecryptKey();
+    if (sharedKey) console.log(`[hidden-numbers] SIP proxy key written to ${sharedKey}`);
+  } catch (e) {
+    console.error(`[hidden-numbers] ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+
+boot();
+
 function coerceHeaderMap(hm: unknown): HeaderMap | undefined {
   if (!hm) return undefined;
   if (typeof hm === "string") return JSON.parse(hm) as HeaderMap;
   return hm as HeaderMap;
-}
-
-type IngestRow = { real: string; token: string | null; ok: boolean; error?: string };
-
-// Tokenize the phone of each record and store the full player row. Shared by the
-// JSON, file-upload, and (single) create paths.
-function ingest(records: UploadRecord[], label: string): { uploadId: number; accepted: number; total: number; rows: IngestRow[] } {
-  const ok: NewNumber[] = [];
-  const rows: IngestRow[] = records.map((rec) => {
-    try {
-      const token = encryptPhone(rec.phone);
-      ok.push({
-        real: rec.phone,
-        token,
-        user_id: rec.user_id,
-        first_name: rec.first_name,
-        last_name: rec.last_name,
-        country: rec.country,
-        language: rec.language,
-        segment: rec.segment,
-        cohort: rec.cohort,
-      });
-      return { real: rec.phone, token, ok: true };
-    } catch (e) {
-      return { real: rec.phone, token: null, ok: false, error: String((e as Error).message) };
-    }
-  });
-  const uploadId = createUpload(label);
-  insertNumbers(uploadId, ok);
-  return { uploadId, accepted: ok.length, total: rows.length, rows };
 }
 
 const metaBody = {
@@ -96,22 +106,18 @@ const metaBody = {
   cohort: t.Optional(t.String()),
 };
 
-// Session auth: a signed, expiring httpOnly cookie (no server-side session store).
 const SESSION_TTL_S = 7 * 24 * 3600;
 
-function sign(payload: string): string {
-  return createHmac("sha256", config.sessionSecret).update(payload).digest("base64url");
+function sessionSecret(): string {
+  return createHash("sha256").update(`${keys.cabinetPassword()}|${keys.ff3Key}|wr-hidden-numbers`).digest("hex");
 }
-function secretEquals(a: string | undefined | null, b: string | undefined | null): boolean {
-  if (typeof a !== "string" || typeof b !== "string") return false;
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+
+function sign(payload: string): string {
+  return createHmac("sha256", sessionSecret()).update(payload).digest("base64url");
 }
 
 function makeToken(): string {
-  const payload = Buffer.from(`${config.auth.user}:${Date.now() + SESSION_TTL_S * 1000}`).toString("base64url");
+  const payload = Buffer.from(`${keys.cabinetUser()}:${Date.now() + SESSION_TTL_S * 1000}`).toString("base64url");
   return `${payload}.${sign(payload)}`;
 }
 function verifyToken(token?: string): boolean {
@@ -119,8 +125,16 @@ function verifyToken(token?: string): boolean {
   const [payload, sig] = token.split(".");
   if (!payload || !sig || !secretEquals(sign(payload), sig)) return false;
   const [user, exp] = Buffer.from(payload, "base64url").toString().split(":");
-  return user === config.auth.user && Number(exp) > Date.now();
+  return user === keys.cabinetUser() && Number(exp) > Date.now();
 }
+function trunkKeys() {
+  const state = getTelephony();
+  return enabledModes().map((mode) => {
+    const m = state.modes[mode]!;
+    return { mode, host: m.host, port: m.port, key: m.key, previousKeyAccepted: Boolean(m.prevKey) };
+  });
+}
+
 function readCookie(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
   for (const part of header.split(";")) {
@@ -131,12 +145,10 @@ function readCookie(header: string | undefined, name: string): string | undefine
 }
 
 const api = new Elysia({ prefix: "/api" })
-  // Session guard. /login and /decrypt are exempt; auth is off when no creds are set.
   .onBeforeHandle(({ request, headers, set }) => {
     const path = new URL(request.url).pathname;
     if (path.endsWith("/login")) return;
     if (path.endsWith("/health") || path.endsWith("/up")) return;
-    if (!config.auth.user || !config.auth.pass) return;
     if (!verifyToken(readCookie(headers.cookie, "cabinet_session"))) {
       set.status = 401;
       return { error: "unauthorized" };
@@ -145,7 +157,7 @@ const api = new Elysia({ prefix: "/api" })
   .post(
     "/login",
     ({ body, set }) => {
-      const ok = !!config.auth.user && secretEquals(body.user, config.auth.user) && secretEquals(body.pass, config.auth.pass);
+      const ok = secretEquals(body.user, keys.cabinetUser()) && secretEquals(body.pass, keys.cabinetPassword());
       if (!ok) {
         set.status = 401;
         return { ok: false, error: "Invalid credentials" };
@@ -159,14 +171,11 @@ const api = new Elysia({ prefix: "/api" })
     set.headers["Set-Cookie"] = "cabinet_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
     return { ok: true };
   })
-  .get("/me", () => ({ user: config.auth.user ?? "operator", build: buildInfo }))
-  // Create from a JSON list of phones (paste box).
-  .post("/numbers", ({ body }) => ingest(body.numbers.map((p) => ({ phone: p })), body.label?.trim() || "Pasted list"), {
+  .get("/me", () => ({ user: keys.cabinetUser(), build: buildInfo }))
+  .post("/numbers", ({ body }) => ingestRecords(body.numbers.map((p) => ({ phone: p })), body.label?.trim() || "Pasted list"), {
     body: t.Object({ numbers: t.Array(t.String()), label: t.Optional(t.String()) }),
   })
 
-  // Create from an uploaded CSV / XLSX file (multipart field `file`). Captures all
-  // documented columns; see README for the format.
   .post(
     "/numbers/upload",
     async ({ body, set }) => {
@@ -176,7 +185,7 @@ const api = new Elysia({ prefix: "/api" })
           set.status = 422;
           return { error: "no phone column found / file empty" };
         }
-        return { filename: body.file.name, ...ingest(records, body.file.name || "Upload") };
+        return { filename: body.file.name, ...ingestRecords(records, body.file.name || "Upload") };
       } catch (e) {
         set.status = 400;
         return { error: `could not parse file: ${String((e as Error).message)}` };
@@ -185,8 +194,6 @@ const api = new Elysia({ prefix: "/api" })
     { body: t.Object({ file: t.File({ maxSize: "20m" }), header_map: t.Optional(t.Any()) }) },
   )
 
-  // Preview a file (headers + auto-detected mapping + sample rows) WITHOUT storing —
-  // drives the UI column mapper.
   .post(
     "/numbers/preview",
     async ({ body, set }) => {
@@ -200,7 +207,6 @@ const api = new Elysia({ prefix: "/api" })
     { body: t.Object({ file: t.File({ maxSize: "20m" }), header_map: t.Optional(t.Any()) }) },
   )
 
-  // Paginated list. ?limit=&offset= (limit capped at 500).
   .get(
     "/numbers",
     ({ query }) => {
@@ -229,7 +235,6 @@ const api = new Elysia({ prefix: "/api" })
     return row;
   })
 
-  // Update: any subset of fields. Changing `real` re-encrypts -> new token.
   .patch(
     "/numbers/:id",
     ({ params, body, set }) => {
@@ -266,7 +271,6 @@ const api = new Elysia({ prefix: "/api" })
     return { deleted: true };
   })
 
-  // Uploads (batches): list, detail, per-upload CSV export, delete.
   .get("/uploads", () => ({ uploads: listUploads() }))
   .get("/uploads/:id", ({ params, set }) => {
     const upload = getUpload(Number(params.id));
@@ -286,6 +290,65 @@ const api = new Elysia({ prefix: "/api" })
     set.headers["content-disposition"] = `attachment; filename="upload-${upload.id}-tokens.csv"`;
     return toCoreCsv(rowsForUpload(upload.id));
   })
+  .post(
+    "/uploads/:id/send",
+    ({ params, body, set }) => {
+      const upload = getUpload(Number(params.id));
+      if (!upload) {
+        set.status = 404;
+        return { error: "not found" };
+      }
+      if (upload.label === STREAM_LABEL) {
+        set.status = 422;
+        return { error: "numbers from the CRM stream are sent to Platform as they arrive" };
+      }
+      const sent = sendUpload(upload.id, body?.force === true);
+      if ("error" in sent) {
+        set.status = sent.status;
+        return { error: sent.error };
+      }
+      if ("conflict" in sent) {
+        set.status = 409;
+        return { error: "this upload was already sent to Platform; sending it again creates new calls", batch_ids: sent.conflict };
+      }
+      kickPushWorker();
+      return { batch: getBatch(PUSH_MAX_ATTEMPTS, sent.batchId) };
+    },
+    {
+      body: t.Optional(
+        t.Object({
+          force: t.Optional(t.Boolean()),
+        }),
+      ),
+    },
+  )
+  .get(
+    "/batches",
+    ({ query }) => {
+      const limit = Math.min(Math.max(Number(query.limit ?? 20), 1), 100);
+      const offset = Math.max(Number(query.offset ?? 0), 0);
+      return { ...listBatches(PUSH_MAX_ATTEMPTS, limit, offset), limit, offset };
+    },
+    { query: t.Object({ limit: t.Optional(t.String()), offset: t.Optional(t.String()) }) },
+  )
+  .get("/batches/:id", ({ params, set }) => {
+    const batch = getBatch(PUSH_MAX_ATTEMPTS, Number(params.id));
+    if (!batch) {
+      set.status = 404;
+      return { error: "not found" };
+    }
+    return { batch, errors: batchErrors(PUSH_MAX_ATTEMPTS, batch.id) };
+  })
+  .post("/batches/:id/retry", ({ params, set }) => {
+    const batch = getBatch(PUSH_MAX_ATTEMPTS, Number(params.id));
+    if (!batch) {
+      set.status = 404;
+      return { error: "not found" };
+    }
+    const requeued = retryAbandonedInBatch(PUSH_MAX_ATTEMPTS, batch.id);
+    if (requeued > 0) kickPushWorker();
+    return { requeued, batch: getBatch(PUSH_MAX_ATTEMPTS, batch.id) };
+  })
   .delete("/uploads/:id", ({ params, set }) => {
     if (!deleteUpload(Number(params.id))) {
       set.status = 404;
@@ -294,13 +357,11 @@ const api = new Elysia({ prefix: "/api" })
     return { deleted: true };
   })
 
-  // Whole base as a core-shape CSV (tokens in phone_e164).
   .get("/export.csv", ({ set }) => {
     set.headers["content-type"] = "text/csv; charset=utf-8";
     set.headers["content-disposition"] = `attachment; filename="tokens.csv"`;
     return toCoreCsv(allRecords());
   })
-
 
   .get("/settings", () => ({
     crm: getCrmConfig(),
@@ -308,7 +369,110 @@ const api = new Elysia({ prefix: "/api" })
     inboundKey: getInboundKey(),
     coreKey: getCoreKey(),
     defaults: DEFAULT_CRM_CONFIG,
+    pushRatePerMin: getPushRate(),
+    trunks: trunkKeys(),
+    keys: {
+      ...encryptionKeysInfo(),
+      decryptKey: keys.decryptKey(),
+      decryptKeyPending: decryptKeyPending(),
+      cabinetUser: keys.cabinetUser(),
+      cabinetPassword: keys.cabinetPassword(),
+    },
   }))
+
+  .put(
+    "/settings/encryption",
+    async ({ body, set }) => {
+      try {
+        const info = changeEncryptionKeys(body.generate ? "generate" : { ff3Key: body.ff3Key ?? "", ff3Tweak: body.ff3Tweak ?? "", routeDigit: body.routeDigit ?? "" });
+        if (getCoreState()?.status !== "active") return { keys: info };
+        try {
+          const registered = await registerWithCore();
+          const message = (registered.body as { error?: { message?: string } }).error?.message;
+          return { keys: info, reregistered: registered.status, ...(message ? { error: message } : {}) };
+        } catch (e) {
+          return { keys: info, reregistered: "failed", error: (e as Error).message };
+        }
+      } catch (e) {
+        set.status = 422;
+        return { error: (e as Error).message };
+      }
+    },
+    {
+      body: t.Object({
+        generate: t.Optional(t.Boolean()),
+        ff3Key: t.Optional(t.String({ maxLength: 64 })),
+        ff3Tweak: t.Optional(t.String({ maxLength: 16 })),
+        routeDigit: t.Optional(t.String({ maxLength: 1 })),
+      }),
+    },
+  )
+
+  .put(
+    "/settings/login",
+    ({ body, set }) => {
+      try {
+        changeLogin(body.user, body.password);
+        set.headers["Set-Cookie"] = `cabinet_session=${makeToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_S}`;
+        return { user: keys.cabinetUser() };
+      } catch (e) {
+        set.status = 422;
+        return { error: "the login may hold letters, digits and . _ @ -; the password needs at least 8 characters" };
+      }
+    },
+    { body: t.Object({ user: t.String({ maxLength: 64 }), password: t.String({ maxLength: 256 }) }) },
+  )
+
+  .post(
+    "/settings/decrypt-key",
+    ({ body, set }) => {
+      try {
+        return { decryptKey: changeDecryptKey(body?.key?.trim() || undefined), decryptKeyPending: decryptKeyPending() };
+      } catch (e) {
+        set.status = 422;
+        return { error: "the key needs at least 16 characters" };
+      }
+    },
+    { body: t.Optional(t.Object({ key: t.Optional(t.String({ maxLength: 256 })) })) },
+  )
+
+  .get("/settings/keys.env", ({ set }) => {
+    set.headers["content-type"] = "text/plain; charset=utf-8";
+    set.headers["content-disposition"] = `attachment; filename="hidden-numbers-keys.env"`;
+    return `${exportKeysEnv()}\n`;
+  })
+
+  .post(
+    "/settings/trunks/:mode/key",
+    async ({ params, body, set }) => {
+      if (!(TRUNK_MODES as readonly string[]).includes(params.mode) || !enabledModes().includes(params.mode as TrunkMode)) {
+        set.status = 404;
+        return { error: `${params.mode} is not enabled` };
+      }
+      const key = body?.key?.trim() || undefined;
+      try {
+        const result = await changeTrunkKeyAndSync(params.mode as TrunkMode, key);
+        return { ...result, trunks: trunkKeys() };
+      } catch (e) {
+        set.status = 422;
+        return { error: "the key must be 16-128 letters, digits, _ or -" };
+      }
+    },
+    { body: t.Optional(t.Object({ key: t.Optional(t.String({ maxLength: 128 })) })) },
+  )
+
+  .put(
+    "/settings/push",
+    ({ body, set }) => {
+      try {
+        return { pushRatePerMin: setPushRate(body.rate) };
+      } catch (e) {
+        set.status = 422;
+        return { error: String((e as Error).message) };
+      }
+    },
+    { body: t.Object({ rate: t.Number() }) },
+  )
 
   .put(
     "/settings/crm",
@@ -338,7 +502,7 @@ const api = new Elysia({ prefix: "/api" })
 
   .post(
     "/settings/keys/:which",
-    ({ params, set }) => {
+    async ({ params, set }) => {
       const value = crypto.randomUUID().replace(/-/g, "");
       if (params.which === "inbound") {
         setInboundKey(value);
@@ -346,7 +510,13 @@ const api = new Elysia({ prefix: "/api" })
       }
       if (params.which === "core") {
         setCoreKey(value);
-        return { key: value };
+        if (getCoreState()?.status !== "active") return { key: value };
+        try {
+          const registered = await registerWithCore();
+          return { key: value, reregistered: registered.status };
+        } catch (e) {
+          return { key: value, reregistered: "failed", error: (e as Error).message };
+        }
       }
       set.status = 404;
       return { error: "unknown key" };
@@ -419,7 +589,6 @@ const api = new Elysia({ prefix: "/api" })
     try {
       const results = await pushRequests(pending);
       const sent = results.filter((r) => r.ok).length;
-      if (sent > 0) markPushed([results[0].token]);
       return { sent, failed: results.length - sent, error: results.find((r) => !r.ok)?.error };
     } catch (e) {
       set.status = 400;
@@ -442,9 +611,6 @@ const api = new Elysia({ prefix: "/api" })
     return { leadId: row.external_id, ...(await fetchLeadTranscript(row.external_id)) };
   });
 
-// Serve the pre-built React UI (run `bun run build:web` → dist/) as static files.
-// Pre-building runs the Tailwind plugin so utility classes are generated (the dev
-// fullstack server does this at runtime, but production bundling does not).
 const BUILD_EXAMPLE = { version: "0.3.1", commit: "219813e", builtAt: "2026-09-17T09:00:00Z" };
 
 const buildSchema = t.Object(
@@ -454,6 +620,37 @@ const buildSchema = t.Object(
     builtAt: t.Nullable(t.String()),
   },
   { examples: [BUILD_EXAMPLE] },
+);
+
+const QUEUE_EXAMPLE = {
+  pending: 0,
+  due: 0,
+  abandoned: 0,
+  oldest_pending_age_seconds: null,
+  rate_per_min: 100,
+  attempts_last_minute: 0,
+  wr_configured: true,
+  blocked: null,
+  worker_running: false,
+  worker_last_run_at: "2026-09-24T12:00:00.000Z",
+  worker_last_error: null,
+};
+
+const queueSchema = t.Object(
+  {
+    pending: t.Number({ description: "Calls waiting to be sent to Platform, retries included." }),
+    due: t.Number({ description: "Pending calls that may be sent right now." }),
+    abandoned: t.Number({ description: "Calls that gave up after twelve attempts. Retry them from the batch." }),
+    oldest_pending_age_seconds: t.Nullable(t.Number()),
+    rate_per_min: t.Number(),
+    attempts_last_minute: t.Number(),
+    wr_configured: t.Boolean({ description: "False means nothing is sent until the Platform connection is set." }),
+    blocked: t.Nullable(t.String({ description: "Why sending is paused right now, if it is." })),
+    worker_running: t.Boolean(),
+    worker_last_run_at: t.Nullable(t.String()),
+    worker_last_error: t.Nullable(t.String()),
+  },
+  { examples: [QUEUE_EXAMPLE] },
 );
 
 const app = new Elysia()
@@ -520,7 +717,7 @@ const app = new Elysia()
       },
     }),
   )
-  .get("/health", () => ({ ok: true, count: countNumbers(), clientPrefix: config.clientPrefix ?? null, build: buildInfo }), {
+  .get("/health", () => ({ ok: true, count: countNumbers(), clientPrefix: keys.clientPrefix(), build: buildInfo, queue: pushQueueHealth() }), {
     response: {
       200: t.Object(
         {
@@ -528,8 +725,9 @@ const app = new Elysia()
           count: t.Number({ description: "Numbers stored in the cabinet." }),
           clientPrefix: t.Nullable(t.String({ description: "Routing prefix this cabinet is configured with." })),
           build: buildSchema,
+          queue: queueSchema,
         },
-        { examples: [{ ok: true, count: 146, clientPrefix: "123000", build: BUILD_EXAMPLE }] },
+        { examples: [{ ok: true, count: 146, clientPrefix: "123000", build: BUILD_EXAMPLE, queue: QUEUE_EXAMPLE }] },
       ),
     },
     detail: {
@@ -548,39 +746,9 @@ const app = new Elysia()
   .listen(config.port);
 
 startOutboxCron();
-startPushRetryCron();
+startPushWorkerCron();
 console.log(`[hidden-numbers] cabinet listening on :${config.port}`);
-if (!config.auth.user || !config.auth.pass) {
-  console.warn("[hidden-numbers] ⚠ Auth DISABLED — set CABINET_USER and CABINET_PASSWORD to protect the cabinet.");
-}
-
-// Internal-only detokenize listener (token -> real number). Reached by the SIP proxy
-// over the internal network, guarded by X-Decrypt-Key. Never exposed on the public port.
-Bun.serve({
-  hostname: config.internal.host,
-  port: config.internal.port,
-  fetch(req) {
-    const url = new URL(req.url);
-    if (url.pathname !== "/detokenize") return new Response("not found", { status: 404 });
-    if (!secretEquals(req.headers.get("x-decrypt-key"), config.decryptKey)) {
-      return Response.json({ error: "unauthorized" }, { status: 401 });
-    }
-    const raw = url.searchParams.get("t");
-    if (!raw) return Response.json({ error: "missing t" }, { status: 400 });
-    // Kamailio may forward the whole dialed number (<clientPrefix><token>) or a bare
-    // token. Strip our client prefix if present, then decrypt.
-    let digits = raw.replace(/\D/g, "");
-    const pfx = config.clientPrefix;
-    if (pfx && digits.length === pfx.length + 15 && digits.startsWith(pfx)) {
-      digits = digits.slice(pfx.length);
-    }
-    try {
-      return Response.json({ phone: decryptToken(digits) });
-    } catch {
-      return Response.json({ error: "bad token" }, { status: 422 });
-    }
-  },
-});
-console.log(`[hidden-numbers] detokenize (internal) on ${config.internal.host}:${config.internal.port}`);
+Bun.serve({ hostname: config.internal.host, port: config.internal.port, fetch: internalFetch });
+console.log(`[hidden-numbers] internal listener on ${config.internal.host}:${config.internal.port}`);
 
 export type App = typeof app;

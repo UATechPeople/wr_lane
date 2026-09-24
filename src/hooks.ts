@@ -2,25 +2,33 @@ import { timingSafeEqual } from "crypto";
 import { Elysia, t } from "elysia";
 import { encryptPhone, looksLikeToken } from "./fpe";
 import {
+  batchResponseByKey,
+  createBatch,
   getByReal,
   getByToken,
   getRequest,
+  inTransaction,
   insertNumbers,
-  insertRequest,
+  insertRequests,
   latestOpenRequestForNumber,
-  markPushed,
   outboxEnqueue,
   recordCallResult,
   recordRequestResult,
+  saveBatchResponse,
   uploadIdByLabel,
   type NewNumber,
+  type NewRequest,
   type RequestRow,
 } from "./db";
 import { buildResultBody, getCrmConfig, getCoreKey, getInboundKey, parsePayload } from "./webhook";
 import { resultForOutcome } from "./status";
-import { pushRequests } from "./platform";
+import { BULK_PRIORITY, kickPushWorker, LIVE_BATCH_MAX, LIVE_PRIORITY } from "./platform";
 
-const STREAM_LABEL = "CRM stream";
+export const STREAM_LABEL = "CRM stream";
+
+export const MAX_PLAYERS_PER_REQUEST = 5000;
+
+const IDEMPOTENCY_KEY_RE = /^[\x21-\x7e]{1,200}$/;
 
 function presentedKey(headers: Record<string, string | undefined>): string | null {
   const auth = headers.authorization;
@@ -88,15 +96,24 @@ const acceptedRowSchema = t.Object({
 const ACCEPTED_EXAMPLE = {
   received: 1,
   accepted: 1,
-  pushed: { sent: 1, failed: 0 },
+  pushed: null,
+  queued: 1,
+  batch_id: 42,
   rows: [{ phone: "+31612345678", token: "+913694993501880", call_id: "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", ok: true }],
 };
 
 const playersResponse = t.Object(
   {
     received: t.Number(),
-    accepted: t.Number({ description: "Rows that became calls and were sent to Platform." }),
-    pushed: t.Nullable(t.Object({ sent: t.Number(), failed: t.Number(), error: t.Optional(t.String()) })),
+    accepted: t.Number({ description: "Rows that became calls and were queued for Platform." }),
+    pushed: t.Nullable(
+      t.Object(
+        { sent: t.Number(), failed: t.Number(), error: t.Optional(t.String()) },
+        { description: "Always null: calls are sent to Platform in the background at the configured rate." },
+      ),
+    ),
+    queued: t.Number({ description: "Calls queued for Platform by this request." }),
+    batch_id: t.Nullable(t.Number({ description: "Batch of this request. Track it in the cabinet." })),
     rows: t.Array(acceptedRowSchema),
   },
   { examples: [ACCEPTED_EXAMPLE] },
@@ -145,7 +162,7 @@ const INBOUND_DETAIL = {
   tags: ["Players"],
   security: [{ inboundKey: [] }],
   description:
-    "Send a player to be called. The number is encrypted into a token here; only the token leaves your infrastructure. Every request is a separate call with its own call_id. The result comes back to `webhook_url` as `{ \"phone\": \"+31612345678\", \"call_id\": \"uuid\", \"result\": \"no_answer\", \"payload\": { \"a\": \"b\", \"user_id\": \"12345\" } }`.",
+    "Send a player to be called. The number is encrypted into a token here; only the token leaves your infrastructure. Every request is a separate call with its own call_id. The result comes back to `webhook_url` as `{ \"phone\": \"+31612345678\", \"call_id\": \"uuid\", \"result\": \"no_answer\", \"payload\": { \"a\": \"b\", \"user_id\": \"12345\" } }`. Calls are queued and sent to Platform in the background at the rate set in the cabinet. At most 5000 players per request. Send an `Idempotency-Key` header to make a retried request return the first response instead of creating new calls.",
 };
 
 type PlayerInput = {
@@ -199,9 +216,9 @@ type PlayersContext = {
   set: { status?: number };
 };
 
-type Pending = { input: PlayerInput; token: string; userId?: string; webhookUrl: string | null };
+type Pending = { input: PlayerInput; token: string; userId?: string; webhookUrl: string | null; row: AcceptedRow };
 
-async function acceptPlayers({ body, headers, set }: PlayersContext) {
+function acceptPlayers({ body, headers, set }: PlayersContext) {
   const allowed = guard(headers, getInboundKey());
   if (!allowed.ok) {
     set.status = allowed.status;
@@ -212,6 +229,23 @@ async function acceptPlayers({ body, headers, set }: PlayersContext) {
   if (inputs.length === 0) {
     set.status = 422;
     return { error: "no records" };
+  }
+  if (inputs.length > MAX_PLAYERS_PER_REQUEST) {
+    set.status = 413;
+    return { error: `too many records: ${inputs.length}, send at most ${MAX_PLAYERS_PER_REQUEST} per request` };
+  }
+
+  const idempotencyKey = headers["idempotency-key"]?.trim() || null;
+  if (idempotencyKey !== null && !IDEMPOTENCY_KEY_RE.test(idempotencyKey)) {
+    set.status = 422;
+    return { error: "Idempotency-Key must be 1-200 printable ASCII characters" };
+  }
+  if (idempotencyKey !== null) {
+    const stored = batchResponseByKey(idempotencyKey);
+    if (stored !== null) {
+      set.status = 202;
+      return JSON.parse(stored) as unknown;
+    }
   }
 
   const pending: Pending[] = [];
@@ -225,54 +259,67 @@ async function acceptPlayers({ body, headers, set }: PlayersContext) {
     const userId = normalizeUserId(payloadUserId(input.payload));
     try {
       const token = encryptPhone(input.phone);
-      pending.push({ input, token, userId: userId.value, webhookUrl: validWebhookUrl(input.webhook_url) });
-      return { phone: input.phone, token, call_id: null, ok: true, ...(userId.warning ? { warning: userId.warning } : {}) };
+      const row: AcceptedRow = { phone: input.phone, token, call_id: null, ok: true, ...(userId.warning ? { warning: userId.warning } : {}) };
+      pending.push({ input, token, userId: userId.value, webhookUrl: validWebhookUrl(input.webhook_url), row });
+      return row;
     } catch (e) {
       return { phone: input.phone, token: null, call_id: null, ok: false, error: (e as Error).message };
     }
   });
 
-  if (pending.length > 0) {
-    const numbers: NewNumber[] = pending.map(({ input, token, userId }) => ({
-      real: input.phone,
-      token,
-      user_id: userId,
-      segment: input.segment,
-      cohort: input.cohort,
-    }));
-    insertNumbers(uploadIdByLabel(STREAM_LABEL), numbers);
-  }
+  const priority = pending.length <= LIVE_BATCH_MAX ? LIVE_PRIORITY : BULK_PRIORITY;
 
-  const requests: RequestRow[] = [];
-  for (const item of pending) {
-    const number = getByToken(item.token);
-    const row = rows.find((r) => r.ok && r.token === item.token && r.call_id === null);
-    if (!number || !row) continue;
-    const request = insertRequest({
-      call_id: crypto.randomUUID(),
-      number_id: number.id,
-      webhook_url: item.webhookUrl,
-      payload: item.input.payload,
-      segment: item.input.segment ?? null,
-      cohort: item.input.cohort ?? null,
-    });
-    row.call_id = request.call_id;
-    requests.push(request);
-  }
+  const response = inTransaction(() => {
+    const replayed = idempotencyKey === null ? null : batchResponseByKey(idempotencyKey);
+    if (replayed !== null) return JSON.parse(replayed) as { queued: number };
+    let batchId: number | null = null;
+    let queued = 0;
+    if (pending.length > 0) {
+      const numbers: NewNumber[] = pending.map(({ input, token, userId }) => ({
+        real: input.phone,
+        token,
+        user_id: userId,
+        segment: input.segment,
+        cohort: input.cohort,
+      }));
+      insertNumbers(uploadIdByLabel(STREAM_LABEL), numbers);
+      batchId = createBatch({ source: "hook", idempotencyKey });
 
-  let pushed: { sent: number; failed: number; error?: string } | null = null;
-  if (requests.length > 0) {
-    try {
-      const results = await pushRequests(requests);
-      markPushed(results.filter((r) => r.ok).map((r) => r.token));
-      pushed = { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
-    } catch (e) {
-      pushed = { sent: 0, failed: requests.length, error: (e as Error).message };
+      const numberIds = new Map<string, number>();
+      const requests: NewRequest[] = [];
+      for (const item of pending) {
+        let numberId = numberIds.get(item.token);
+        if (numberId === undefined) {
+          numberId = getByToken(item.token)?.id;
+          if (numberId === undefined) continue;
+          numberIds.set(item.token, numberId);
+        }
+        const callId = crypto.randomUUID();
+        requests.push({
+          call_id: callId,
+          number_id: numberId,
+          webhook_url: item.webhookUrl,
+          payload: item.input.payload,
+          segment: item.input.segment ?? null,
+          cohort: item.input.cohort ?? null,
+          batch_id: batchId,
+          priority,
+        });
+        item.row.call_id = callId;
+      }
+      insertRequests(requests);
+      queued = requests.length;
+    } else if (idempotencyKey !== null) {
+      batchId = createBatch({ source: "hook", idempotencyKey });
     }
-  }
+    const result = { received: rows.length, accepted: queued, pushed: null, queued, batch_id: batchId, rows };
+    if (batchId !== null) saveBatchResponse(batchId, result);
+    return result;
+  });
 
+  if (response.queued > 0) kickPushWorker();
   set.status = 202;
-  return { received: rows.length, accepted: requests.length, pushed, rows };
+  return response;
 }
 
 type CallResultPayload = {
@@ -294,9 +341,9 @@ export function callIdFromExternalId(externalId: string | null | undefined): str
 }
 
 export const hooks = new Elysia({ prefix: "/hook" })
-  .post("/players", async (ctx) => acceptPlayers(ctx as PlayersContext), {
+  .post("/players", (ctx) => acceptPlayers(ctx as PlayersContext), {
     body: playersBody,
-    response: { 202: playersResponse, 401: errorResponse, 422: errorResponse, 503: errorResponse },
+    response: { 202: playersResponse, 401: errorResponse, 413: errorResponse, 422: errorResponse, 503: errorResponse },
     detail: { ...INBOUND_DETAIL, summary: "Send players" },
   })
   .post(

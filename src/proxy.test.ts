@@ -491,3 +491,211 @@ describe("one token, one row, whatever the formatting", () => {
     expect(after.user_id).toBe("u-1");
   });
 });
+
+describe("paced intake queue", async () => {
+  const db = await import("./db");
+  const { hooks, MAX_PLAYERS_PER_REQUEST } = await import("./hooks");
+  const { setInboundKey } = await import("./webhook");
+  const worker = await import("./platform");
+
+  const received: string[] = [];
+  let delayMs = 0;
+  let status = 202;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const event = (await req.json()) as { event_id: string };
+      if (delayMs > 0) await Bun.sleep(delayMs);
+      received.push(event.event_id);
+      return Response.json({ ok: true }, { status });
+    },
+  });
+
+  const INBOUND = "queue-test-inbound-key";
+  setInboundKey(INBOUND);
+
+  const connect = () =>
+    saveWrConfig({
+      baseUrl: `http://127.0.0.1:${server.port}`,
+      slug: "queue",
+      apiKey: "queue-key",
+      playerSegment: "seg",
+      fields: DEFAULT_WR_FIELDS,
+    });
+
+  const disconnect = () =>
+    db.setSetting("wr_connection", JSON.stringify({ baseUrl: "", slug: "", apiKey: "", playerSegment: "seg", fields: DEFAULT_WR_FIELDS }));
+
+  const drainAll = async () => {
+    worker.setPushRate(worker.MAX_PUSH_RATE_PER_MIN);
+    for (let i = 0; i < 20 && db.pushQueueStats(PUSH_MAX_ATTEMPTS).due > 0; i += 1) await worker.drainPushQueue();
+  };
+
+  let seq = 0;
+  const phone = () => {
+    seq += 1;
+    return "+44770" + String(Date.now() + seq).slice(-7);
+  };
+
+  const post = (body: unknown, headers: Record<string, string> = {}) =>
+    hooks.handle(
+      new Request("http://cabinet/hook/players", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": INBOUND, ...headers },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  type Accepted = { received: number; accepted: number; pushed: null; queued: number; batch_id: number | null; rows: { call_id: string | null; ok: boolean }[] };
+
+  test("the budget per tick is a twelfth of the rate and never exceeds what is left of the minute", () => {
+    expect(worker.tickBudget(100, 0)).toBe(9);
+    expect(worker.tickBudget(100, 95)).toBe(5);
+    expect(worker.tickBudget(100, 120)).toBe(0);
+    expect(worker.tickBudget(12, 0)).toBe(1);
+  });
+
+  test("the rate setting accepts whole numbers in range only", () => {
+    expect(() => worker.setPushRate(0)).toThrow();
+    expect(() => worker.setPushRate(1.5)).toThrow();
+    expect(worker.setPushRate(30)).toBe(30);
+    expect(worker.getPushRate()).toBe(30);
+  });
+
+  test("players are queued and answered without waiting for Platform", async () => {
+    connect();
+    await drainAll();
+    received.length = 0;
+    const same = phone();
+    const res = await post([{ phone: same }, { phone: same, cohort: "c2" }, { phone: phone() }]);
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as Accepted;
+    expect(body.pushed).toBeNull();
+    expect(body.accepted).toBe(3);
+    expect(body.queued).toBe(3);
+    expect(body.batch_id).not.toBeNull();
+    const ids = body.rows.map((r) => r.call_id);
+    expect(new Set(ids).size).toBe(3);
+    for (const id of ids) {
+      const request = db.getRequest(id as string)!;
+      expect(request.batch_id).toBe(body.batch_id);
+      expect(request.priority).toBe(worker.LIVE_PRIORITY);
+    }
+    await worker.pushWorkerIdle();
+    await drainAll();
+    for (const id of ids) {
+      expect(received.filter((e) => e === `hn-${id}`)).toHaveLength(1);
+      const request = db.getRequest(id as string)!;
+      expect(request.pushed_at).not.toBeNull();
+      expect(request.push_tried_at).not.toBeNull();
+      expect(db.getNumber(request.number_id)!.pushed_at).not.toBeNull();
+    }
+    const batch = db.getBatch(PUSH_MAX_ATTEMPTS, body.batch_id!)!;
+    expect(batch).toMatchObject({ source: "hook", total: 3, pushed: 3, queued: 0, abandoned: 0 });
+  });
+
+  test("a large array goes to the bulk lane", async () => {
+    const players = Array.from({ length: worker.LIVE_BATCH_MAX + 1 }, () => ({ phone: phone() }));
+    const body = (await (await post(players)).json()) as Accepted;
+    expect(db.getRequest(body.rows[0].call_id!)!.priority).toBe(worker.BULK_PRIORITY);
+    await worker.pushWorkerIdle();
+    await drainAll();
+  });
+
+  test("more than the limit is refused with 413 and nothing is stored", async () => {
+    const before = db.pushQueueStats(PUSH_MAX_ATTEMPTS).pending;
+    const res = await post(Array.from({ length: MAX_PLAYERS_PER_REQUEST + 1 }, () => ({ phone: "+447700900001" })));
+    expect(res.status).toBe(413);
+    expect(db.pushQueueStats(PUSH_MAX_ATTEMPTS).pending).toBe(before);
+  });
+
+  test("a retried request with the same Idempotency-Key returns the first answer and creates no calls", async () => {
+    const key = `idem-${Date.now()}`;
+    const first = (await (await post([{ phone: phone() }], { "idempotency-key": key })).json()) as Accepted;
+    const second = (await (await post([{ phone: phone() }], { "idempotency-key": key })).json()) as Accepted;
+    expect(second).toEqual(first);
+    expect(db.getBatch(PUSH_MAX_ATTEMPTS, first.batch_id!)!.total).toBe(1);
+    const withoutKey = (await (await post([{ phone: phone() }])).json()) as Accepted;
+    expect(withoutKey.batch_id).not.toBe(first.batch_id);
+    await worker.pushWorkerIdle();
+    await drainAll();
+  });
+
+  test("live players are picked first but bulk keeps a fifth of the budget", async () => {
+    await drainAll();
+    disconnect();
+    const bulk = (await (await post(Array.from({ length: 25 }, () => ({ phone: phone() })))).json()) as Accepted;
+    const live = (await (await post(Array.from({ length: 10 }, () => ({ phone: phone() })))).json()) as Accepted;
+    await worker.pushWorkerIdle();
+    const liveIds = new Set(live.rows.map((r) => r.call_id));
+    const bulkIds = new Set(bulk.rows.map((r) => r.call_id));
+    const picked = worker.pickDueRequests(10);
+    expect(picked.filter((r) => liveIds.has(r.call_id))).toHaveLength(8);
+    expect(picked.filter((r) => bulkIds.has(r.call_id))).toHaveLength(2);
+    expect(worker.pickDueRequests(40).filter((r) => bulkIds.has(r.call_id))).toHaveLength(25);
+    connect();
+    await drainAll();
+  });
+
+  test("kicking the worker many times at once sends every call exactly once", async () => {
+    await drainAll();
+    received.length = 0;
+    delayMs = 30;
+    worker.setPushRate(worker.MAX_PUSH_RATE_PER_MIN);
+    const body = (await (await post(Array.from({ length: 12 }, () => ({ phone: phone() })))).json()) as Accepted;
+    for (let i = 0; i < 5; i += 1) worker.kickPushWorker();
+    await worker.pushWorkerIdle();
+    delayMs = 0;
+    for (const row of body.rows) expect(received.filter((e) => e === `hn-${row.call_id}`)).toHaveLength(1);
+  });
+
+  test("the rate caps how many calls one pass sends", async () => {
+    await drainAll();
+    disconnect();
+    await post(Array.from({ length: 30 }, () => ({ phone: phone() })));
+    await worker.pushWorkerIdle();
+    connect();
+    const usedThisMinute = db.pushAttemptsInLastMinute();
+    worker.setPushRate(usedThisMinute + 24);
+    const result = await worker.drainPushQueue();
+    expect(result.budget).toBe(worker.tickBudget(usedThisMinute + 24, usedThisMinute));
+    expect(result.budget).toBeGreaterThan(0);
+    expect(result.sent + result.failed).toBe(Math.min(result.budget, 30));
+    await drainAll();
+  });
+
+  test("without a Platform connection nothing is attempted and no attempt is burned", async () => {
+    await drainAll();
+    disconnect();
+    const body = (await (await post([{ phone: phone() }])).json()) as Accepted;
+    await worker.pushWorkerIdle();
+    const result = await worker.drainPushQueue();
+    expect(result.skipped).toBeDefined();
+    const request = db.getRequest(body.rows[0].call_id!)!;
+    expect(request.push_attempts).toBe(0);
+    expect(request.push_tried_at).toBeNull();
+    expect(worker.pushQueueHealth().wr_configured).toBe(false);
+    connect();
+    await drainAll();
+    expect(db.getRequest(body.rows[0].call_id!)!.pushed_at).not.toBeNull();
+  });
+
+  test("retrying a batch requeues only the calls that gave up, under the same call id", async () => {
+    await drainAll();
+    status = 500;
+    const body = (await (await post([{ phone: phone() }, { phone: phone() }])).json()) as Accepted;
+    await worker.pushWorkerIdle();
+    const [gaveUp, stillQueued] = body.rows.map((r) => r.call_id as string);
+    db.markRequestPushAbandoned(gaveUp, "platform responded 500", PUSH_MAX_ATTEMPTS);
+    expect(db.getBatch(PUSH_MAX_ATTEMPTS, body.batch_id!)).toMatchObject({ abandoned: 1, queued: 1 });
+    expect(db.batchErrors(PUSH_MAX_ATTEMPTS, body.batch_id!).map((e) => e.call_id)).toContain(gaveUp);
+    expect(db.retryAbandonedInBatch(PUSH_MAX_ATTEMPTS, body.batch_id!)).toBe(1);
+    expect(db.getRequest(gaveUp)!.push_attempts).toBe(0);
+    expect(db.getRequest(stillQueued)!.push_attempts).toBeGreaterThan(0);
+    status = 202;
+    db.markRequestPushFailed(stillQueued, "reset", 0);
+    await drainAll();
+    expect(db.getBatch(PUSH_MAX_ATTEMPTS, body.batch_id!)).toMatchObject({ pushed: 2, abandoned: 0 });
+    server.stop(true);
+  });
+});

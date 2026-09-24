@@ -1,11 +1,39 @@
 import axios from "axios";
 import { Cron } from "croner";
-import { duePushRequests, getNumber, markRequestPushAbandoned, markRequestPushFailed, markRequestPushed, type NumberRow, type RequestRow } from "./db";
+import {
+  duePushRequests,
+  getNumber,
+  getSetting,
+  markRequestPushAbandoned,
+  markRequestPushFailed,
+  markRequestPushDeferred,
+  markRequestPushed,
+  markRequestTried,
+  pushAttemptsInLastMinute,
+  pushQueueStats,
+  setSetting,
+  type NumberRow,
+  type RequestRow,
+} from "./db";
 import { backoffSeconds } from "./outbox";
 import { looksLikeToken } from "./fpe";
 import { getWrConfig, TOKEN_ONLY_TARGETS, type StoredWrConfig } from "./webhook";
+import { pushBlockedReason } from "./core";
 
 export const PUSH_MAX_ATTEMPTS = 12;
+
+const KEY_REJECTED_PAUSE_S = 300;
+
+let keyRejectedAt: number | null = null;
+
+function keyRejectedReason(): string | null {
+  if (keyRejectedAt === null) return null;
+  if (Date.now() - keyRejectedAt > KEY_REJECTED_PAUSE_S * 1000) {
+    keyRejectedAt = null;
+    return null;
+  }
+  return "Platform rejected the cabinet key; sending is paused for five minutes without using up attempts";
+}
 
 export type PushResult = {
   token: string;
@@ -72,7 +100,9 @@ export async function pushRequest(req: RequestRow): Promise<PushResult> {
   const wr = requireWr();
   const record = getNumber(req.number_id);
   if (!record) {
-    return { token: "", call_id: req.call_id, status: 0, ok: false, error: `number ${req.number_id} is gone` };
+    const error = `number ${req.number_id} is gone`;
+    markRequestPushAbandoned(req.call_id, error, PUSH_MAX_ATTEMPTS);
+    return { token: "", call_id: req.call_id, status: 0, ok: false, error };
   }
   let event: ReturnType<typeof buildEvent>;
   try {
@@ -82,6 +112,7 @@ export async function pushRequest(req: RequestRow): Promise<PushResult> {
     markRequestPushAbandoned(req.call_id, (e as Error).message, PUSH_MAX_ATTEMPTS);
     return { token: record.token, call_id: req.call_id, status: 0, ok: false, error: (e as Error).message };
   }
+  markRequestTried(req.call_id);
   try {
     const response = await axios.post(wr.url, event, {
       headers: {
@@ -94,8 +125,15 @@ export async function pushRequest(req: RequestRow): Promise<PushResult> {
     });
     const body = response.data as { deduplicated?: boolean } | undefined;
     const ok = response.status === 202;
-    if (ok) markRequestPushed(req.call_id);
-    else markRequestPushFailed(req.call_id, `platform responded ${response.status}`, backoffSeconds(req.push_attempts + 1));
+    if (ok) {
+      markRequestPushed(req.call_id);
+      keyRejectedAt = null;
+    } else if (response.status === 401 || response.status === 403) {
+      keyRejectedAt = Date.now();
+      markRequestPushDeferred(req.call_id, `platform rejected the key (${response.status})`, KEY_REJECTED_PAUSE_S);
+    } else {
+      markRequestPushFailed(req.call_id, `platform responded ${response.status}`, backoffSeconds(req.push_attempts + 1));
+    }
     return {
       token: record.token,
       call_id: req.call_id,
@@ -129,27 +167,120 @@ export async function pushRequests(requests: RequestRow[], concurrency = 4): Pro
   return results;
 }
 
-export async function retryPushes(limit = 50): Promise<{ sent: number; failed: number }> {
-  const due = duePushRequests(PUSH_MAX_ATTEMPTS, limit);
-  if (due.length === 0) return { sent: 0, failed: 0 };
-  let results: PushResult[];
-  try {
-    results = await pushRequests(due);
-  } catch (e) {
-    console.error(`[hidden-numbers] push retry skipped: ${(e as Error).message}`);
-    return { sent: 0, failed: due.length };
-  }
-  return { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
+export const PUSH_RATE_SETTING = "push_rate_per_min";
+export const DEFAULT_PUSH_RATE_PER_MIN = 100;
+export const MAX_PUSH_RATE_PER_MIN = 6000;
+export const LIVE_PRIORITY = 0;
+export const BULK_PRIORITY = 1;
+export const LIVE_BATCH_MAX = 20;
+const BULK_SHARE = 0.2;
+const TICKS_PER_MINUTE = 12;
+
+export function getPushRate(): number {
+  const parsed = Number(getSetting(PUSH_RATE_SETTING));
+  if (!Number.isInteger(parsed) || parsed < 1) return DEFAULT_PUSH_RATE_PER_MIN;
+  return Math.min(parsed, MAX_PUSH_RATE_PER_MIN);
 }
 
-export function startPushRetryCron(pattern = "*/30 * * * * *"): Cron {
-  return new Cron(pattern, { protect: true, name: "push-retry" }, async () => {
-    try {
-      await retryPushes();
-    } catch (e) {
-      console.error("[hidden-numbers] push retry failed", e);
-    }
+export function setPushRate(rate: number): number {
+  if (!Number.isInteger(rate) || rate < 1 || rate > MAX_PUSH_RATE_PER_MIN) {
+    throw new Error(`push rate must be a whole number from 1 to ${MAX_PUSH_RATE_PER_MIN} per minute`);
+  }
+  setSetting(PUSH_RATE_SETTING, String(rate));
+  return rate;
+}
+
+export function tickBudget(ratePerMinute: number, attemptsLastMinute: number): number {
+  return Math.max(0, Math.min(Math.ceil(ratePerMinute / TICKS_PER_MINUTE), ratePerMinute - attemptsLastMinute));
+}
+
+export function pickDueRequests(budget: number): RequestRow[] {
+  if (budget <= 0) return [];
+  const bulkReserve = Math.floor(budget * BULK_SHARE);
+  const live = duePushRequests(PUSH_MAX_ATTEMPTS, budget - bulkReserve, LIVE_PRIORITY);
+  const bulk = duePushRequests(PUSH_MAX_ATTEMPTS, budget - live.length, BULK_PRIORITY);
+  return [...live, ...bulk];
+}
+
+function wrConfigured(): boolean {
+  const wr = getWrConfig();
+  return Boolean(wr.baseUrl && wr.slug && wr.apiKey);
+}
+
+export type DrainResult = { sent: number; failed: number; budget: number; skipped?: string };
+
+export async function drainPushQueue(): Promise<DrainResult> {
+  if (!wrConfigured()) return { sent: 0, failed: 0, budget: 0, skipped: "Platform connection is not configured" };
+  const blocked = pushBlockedReason() ?? keyRejectedReason();
+  if (blocked) return { sent: 0, failed: 0, budget: 0, skipped: blocked };
+  const budget = tickBudget(getPushRate(), pushAttemptsInLastMinute());
+  const due = pickDueRequests(budget);
+  if (due.length === 0) return { sent: 0, failed: 0, budget };
+  const results = await pushRequests(due);
+  return { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, budget };
+}
+
+const worker = { running: false, rerun: false, lastRunAt: null as string | null, lastError: null as string | null };
+
+async function runPushWorker(): Promise<void> {
+  worker.running = true;
+  try {
+    do {
+      worker.rerun = false;
+      await drainPushQueue();
+      worker.lastError = null;
+    } while (worker.rerun);
+  } catch (e) {
+    worker.lastError = (e as Error).message;
+    console.error("[hidden-numbers] push worker failed", e);
+  } finally {
+    worker.running = false;
+    worker.lastRunAt = new Date().toISOString();
+  }
+}
+
+export function kickPushWorker(): void {
+  if (worker.running) {
+    worker.rerun = true;
+    return;
+  }
+  void runPushWorker();
+}
+
+export function pushWorkerIdle(): Promise<void> {
+  return new Promise((resolve) => {
+    const check = () => (worker.running ? setTimeout(check, 10) : resolve());
+    check();
   });
+}
+
+export function pushQueueHealth() {
+  const stats = pushQueueStats(PUSH_MAX_ATTEMPTS);
+  const oldestAgeSeconds = stats.oldestPendingAt
+    ? Math.max(0, Math.round((Date.now() - Date.parse(`${stats.oldestPendingAt.replace(" ", "T")}Z`)) / 1000))
+    : null;
+  return {
+    pending: stats.pending,
+    due: stats.due,
+    abandoned: stats.abandoned,
+    oldest_pending_age_seconds: oldestAgeSeconds,
+    rate_per_min: getPushRate(),
+    attempts_last_minute: pushAttemptsInLastMinute(),
+    wr_configured: wrConfigured(),
+    blocked: pushBlockedReason() ?? keyRejectedReason(),
+    worker_running: worker.running,
+    worker_last_run_at: worker.lastRunAt,
+    worker_last_error: worker.lastError,
+  };
+}
+
+export function retryPushes(): { queued: number } {
+  kickPushWorker();
+  return { queued: pushQueueStats(PUSH_MAX_ATTEMPTS).due };
+}
+
+export function startPushWorkerCron(pattern = "*/5 * * * * *"): Cron {
+  return new Cron(pattern, { name: "push-worker" }, () => kickPushWorker());
 }
 
 export type LeadCall = {

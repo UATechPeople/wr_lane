@@ -224,8 +224,10 @@ Content-Type: application/json
             <code className="rounded bg-neutral-100 px-1 font-mono text-xs">phone</code> column is required; optional columns are{" "}
             <code className="rounded bg-neutral-100 px-1 font-mono text-xs">user_id</code>,{" "}
             <code className="rounded bg-neutral-100 px-1 font-mono text-xs">segment</code>,{" "}
-            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">cohort</code>, first_name, last_name, country, language. If
-            your headers differ you map them by hand during the upload. Results for these numbers go to the address from Settings.
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">cohort</code>,{" "}
+            <code className="rounded bg-neutral-100 px-1 font-mono text-xs">webhook_url</code>, first_name, last_name, country, language. If
+            your headers differ you map them by hand during the upload. Each row keeps its own segment, cohort and result webhook; an empty
+            cell falls back to Settings. A number the cabinet already holds joins the new file too, and the import says so.
           </p>
           <p className="text-sm text-neutral-600">
             The export contains tokens instead of phone numbers, so it is safe to hand to anyone — including us.

@@ -1,0 +1,73 @@
+name: hidden-numbers
+
+services:
+  cabinet:
+    image: ${HN_IMAGE_CABINET:?run install.sh}
+    ports:
+      - "${CABINET_BIND:-0.0.0.0}:3500:3500"
+    environment:
+      PORT: 3500
+      INTERNAL_HOST: 0.0.0.0
+      INTERNAL_PORT: 3501
+      DB_PATH: /data/cabinet.sqlite
+      SHARED_DIR: /shared
+    volumes:
+      - cabinet-data:/data
+      - shared:/shared
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3500/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  kamailio:
+    image: ${HN_IMAGE_KAMAILIO:?run install.sh}
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+    environment:
+      HN_CONFIG: cabinet
+      SHARED_DIR: /shared
+      CABINET_INTERNAL_URL: http://cabinet:3501
+      DB_URL: sqlite:///var/lib/kamailio/kamailio.db
+    volumes:
+      - shared:/shared:ro
+      - kamailio-data:/var/lib/kamailio
+    entrypoint: ["/usr/bin/stdbuf", "-oL", "-eL", "/entrypoint.sh"]
+    depends_on:
+      cabinet:
+        condition: service_healthy
+      rtpengine:
+        condition: service_started
+    restart: unless-stopped
+
+  rtpengine:
+    image: ${HN_IMAGE_RTPENGINE:?run install.sh}
+    network_mode: host
+    command:
+      - rtpengine
+      - --interface=${RTPENGINE_INTERFACE:?run install.sh}
+      - --listen-ng=172.28.0.1:22222
+      - --listen-http=172.28.0.1:8080
+      - --port-min=30000
+      - --port-max=30500
+      - --log-level=5
+    restart: unless-stopped
+
+networks:
+  default:
+    name: hidden-numbers
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
+
+volumes:
+  cabinet-data:
+    name: hn-cabinet-data
+  shared:
+    name: hn-shared
+  kamailio-data:
+    name: hn-kamailio-data

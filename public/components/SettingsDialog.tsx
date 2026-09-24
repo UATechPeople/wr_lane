@@ -4,7 +4,7 @@ import { Modal } from "./Modal";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { StatusBadge } from "./StatusBadge";
-import type { CrmConfig, Settings, TestResult, WrConfig } from "../lib/api";
+import type { CrmConfig, EncryptionInput, Settings, TestResult, WrConfig } from "../lib/api";
 
 type HeaderPair = { name: string; value: string };
 
@@ -25,7 +25,12 @@ export function SettingsDialog({
   onClose,
   onSave,
   onSaveWr,
+  onSavePushRate,
   onRotate,
+  onChangeTrunkKey,
+  onChangeEncryption,
+  onChangeLogin,
+  onChangeDecryptKey,
   onTest,
 }: {
   open: boolean;
@@ -34,19 +39,34 @@ export function SettingsDialog({
   onClose: () => void;
   onSave: (crm: CrmConfig) => void;
   onSaveWr: (wr: WrConfig) => void;
+  onSavePushRate: (rate: number) => void;
   onRotate: (which: "inbound" | "core") => void;
+  onChangeTrunkKey: (mode: string, key?: string) => void;
+  onChangeEncryption: (input: EncryptionInput) => void;
+  onChangeLogin: (user: string, password: string) => void;
+  onChangeDecryptKey: (key?: string) => void;
   onTest: () => Promise<TestResult>;
 }) {
   const [draft, setDraft] = useState<CrmConfig | null>(null);
   const [wr, setWr] = useState<WrConfig | null>(null);
   const [pairs, setPairs] = useState<HeaderPair[]>([]);
   const [test, setTest] = useState<TestResult | null>(null);
+  const [rate, setRate] = useState("");
+  const [newKeys, setNewKeys] = useState<Record<string, string>>({});
+  const [ff3, setFf3] = useState({ ff3Key: "", ff3Tweak: "", routeDigit: "" });
+  const [login, setLogin] = useState({ user: "", password: "" });
+  const [decryptDraft, setDecryptDraft] = useState("");
 
   useEffect(() => {
     if (!settings) return;
     setDraft(settings.crm);
     setWr(settings.wr);
     setPairs(toPairs(settings.crm.headers));
+    setRate(String(settings.pushRatePerMin));
+    setNewKeys({});
+    setFf3({ ff3Key: settings.keys.ff3Key, ff3Tweak: settings.keys.ff3Tweak, routeDigit: settings.keys.routeDigit });
+    setLogin({ user: settings.keys.cabinetUser, password: settings.keys.cabinetPassword });
+    setDecryptDraft("");
     setTest(null);
   }, [settings, open]);
 
@@ -56,6 +76,7 @@ export function SettingsDialog({
 
   const save = () => {
     onSaveWr(wr);
+    if (rate.trim() !== String(settings.pushRatePerMin)) onSavePushRate(Number(rate.trim()));
     onSave({ ...draft, headers: toHeaders(pairs) });
   };
 
@@ -131,6 +152,15 @@ export function SettingsDialog({
               />
             </div>
           </div>
+          <Input
+            id="settings-push-rate"
+            label="Send rate, calls per minute"
+            type="number"
+            min={1}
+            value={rate}
+            hint="How fast queued players leave for Platform. Small requests go first, big batches keep at least a fifth of the rate."
+            onChange={(e) => setRate(e.target.value)}
+          />
         </section>
 
         <section className="flex flex-col gap-2">
@@ -227,6 +257,133 @@ export function SettingsDialog({
               </Button>
             </div>
           ))}
+        </section>
+
+        {settings.trunks.length > 0 && (
+          <section className="flex flex-col gap-3">
+            <h3 className="text-sm font-semibold text-neutral-900">SIP trunk keys</h3>
+            <p className="text-xs text-neutral-500">
+              The key the calling platform sends in <code>X-API-Key</code>. A change reaches Platform at once; until it does,
+              the previous key keeps working, so no call is lost.
+            </p>
+            {settings.trunks.map((trunk) => (
+              <div key={trunk.mode} className="flex flex-col gap-2 rounded-xl border border-neutral-200 px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-neutral-800">
+                      {trunk.mode} <span className="font-normal text-neutral-500">→ {trunk.host}:{trunk.port}</span>
+                    </div>
+                    <div className="truncate font-mono text-xs text-neutral-500">{trunk.key}</div>
+                  </div>
+                  {trunk.previousKeyAccepted && <StatusBadge label="previous key still accepted" tone="warning" />}
+                </div>
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <Input
+                      label="New key"
+                      value={newKeys[trunk.mode] ?? ""}
+                      placeholder="empty = generate one"
+                      onChange={(e) => setNewKeys({ ...newKeys, [trunk.mode]: e.target.value })}
+                    />
+                  </div>
+                  <Button
+                    mode="function"
+                    disabled={busy}
+                    onClick={() => {
+                      onChangeTrunkKey(trunk.mode, newKeys[trunk.mode]?.trim() || undefined);
+                      setNewKeys({ ...newKeys, [trunk.mode]: "" });
+                    }}
+                  >
+                    <ArrowPathIcon className="h-4 w-4" />
+                    Change
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-neutral-900">Encryption and access keys</h3>
+            <a href="/api/settings/keys.env" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+              Download all keys
+            </a>
+          </div>
+          <div className="flex flex-col gap-2 rounded-xl border border-neutral-200 px-3 py-2">
+            <div className="text-sm font-semibold text-neutral-800">
+              Token encryption (FF3){" "}
+              <span className="font-mono text-xs font-normal text-neutral-500">fingerprint {settings.keys.fingerprint}</span>
+            </div>
+            <p className="text-xs text-neutral-500">
+              {settings.keys.numbers > 0
+                ? `${settings.keys.numbers} numbers are encrypted with these keys, so only the keys they were encrypted with are accepted — use this to restore the keys of a previous installation.`
+                : "The cabinet holds no numbers yet: enter the keys of a previous installation, or generate new ones."}
+            </p>
+            <Input label="FF3 key" value={ff3.ff3Key} onChange={(e) => setFf3({ ...ff3, ff3Key: e.target.value })} />
+            <div className="flex gap-2">
+              <div className="flex-[3]">
+                <Input label="FF3 tweak" value={ff3.ff3Tweak} onChange={(e) => setFf3({ ...ff3, ff3Tweak: e.target.value })} />
+              </div>
+              <div className="flex-1">
+                <Input label="Route digit" value={ff3.routeDigit} onChange={(e) => setFf3({ ...ff3, routeDigit: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button mode="function" disabled={busy || settings.keys.numbers > 0} onClick={() => onChangeEncryption({ generate: true })}>
+                <ArrowPathIcon className="h-4 w-4" />
+                Generate new
+              </Button>
+              <Button mode="secondary" disabled={busy} onClick={() => onChangeEncryption(ff3)}>
+                Save encryption keys
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 rounded-xl border border-neutral-200 px-3 py-2">
+            <div className="text-sm font-semibold text-neutral-800">Cabinet login</div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Input label="Login" value={login.user} onChange={(e) => setLogin({ ...login, user: e.target.value })} />
+              </div>
+              <div className="flex-1">
+                <Input label="Password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} />
+              </div>
+              <Button mode="secondary" disabled={busy} onClick={() => onChangeLogin(login.user, login.password)}>
+                Save
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 rounded-xl border border-neutral-200 px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-neutral-800">SIP proxy → cabinet</div>
+                <div className="truncate font-mono text-xs text-neutral-500">{settings.keys.decryptKey}</div>
+              </div>
+              {settings.keys.decryptKeyPending && <StatusBadge label="SIP proxy still on the previous key" tone="warning" />}
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Input
+                  label="New key"
+                  value={decryptDraft}
+                  placeholder="empty = generate one"
+                  hint="The SIP proxy takes it at its next restart (update.sh); the previous key keeps working until then."
+                  onChange={(e) => setDecryptDraft(e.target.value)}
+                />
+              </div>
+              <Button
+                mode="function"
+                disabled={busy}
+                onClick={() => {
+                  onChangeDecryptKey(decryptDraft.trim() || undefined);
+                  setDecryptDraft("");
+                }}
+              >
+                <ArrowPathIcon className="h-4 w-4" />
+                Change
+              </Button>
+            </div>
+          </div>
         </section>
 
         {test && (

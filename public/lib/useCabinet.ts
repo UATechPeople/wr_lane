@@ -1,10 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, invertMap, type CrmConfig, type Preview, type RequestRow, type Row, type Settings, type Transcript, type Upload, type WrConfig } from "./api";
+import { api, invertMap, type Batch, type CrmConfig, type Preview, type RequestRow, type Row, type EncryptionInput, type Settings, type UploadResult, type Transcript, type Upload, type WrConfig } from "./api";
 import type { ToastData, ToastTone } from "../components/Toast";
 
 const PAGE_SIZE = 25;
 
 export type ConfirmState = { title: string; description: string; confirmLabel: string; run: () => Promise<void> };
+
+function importMessage(res: UploadResult): string {
+  const { total, added, known, changed, rejected } = res.summary;
+  const parts = [`${added} new`];
+  if (known > 0) parts.push(`${known} already in the cabinet`);
+  if (changed > 0) {
+    const details = res.rows
+      .flatMap((r) => (r.changed ?? []).map((c) => `${r.real} ${c.field} ${c.from ?? "—"} → ${c.to}`))
+      .slice(0, 3)
+      .join("; ");
+    parts.push(`${changed} changed (${details}${changed > 3 ? "; …" : ""})`);
+  }
+  if (rejected > 0) {
+    const reasons = res.rows
+      .filter((r) => r.status === "rejected")
+      .slice(0, 3)
+      .map((r) => `${r.real}: ${r.error}`)
+      .join("; ");
+    parts.push(`${rejected} rejected (${reasons}${rejected > 3 ? "; …" : ""})`);
+  }
+  return `Imported ${added + known} of ${total}: ${parts.join(" · ")}`;
+}
 
 export function useCabinet() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -23,6 +45,8 @@ export function useCabinet() {
 
   const [editing, setEditing] = useState<Row | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [sendingUpload, setSendingUpload] = useState<Upload | null>(null);
+  const [batchesOpen, setBatchesOpen] = useState(false);
 
   const [settings, setSettings] = useState<Settings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -91,10 +115,7 @@ export function useCabinet() {
     try {
       const res = await api.upload(file, invertMap(map));
       if (res.error) notify(`Upload failed: ${res.error}`, "error");
-      else {
-        const bad = (res.rows ?? []).filter((r) => !r.ok).length;
-        notify(`Imported ${res.accepted} of ${res.total}` + (bad ? ` · ${bad} rejected` : ""), bad ? "info" : "success");
-      }
+      else notify(importMessage(res), res.summary.rejected > 0 ? "info" : "success");
       closeAdd();
       setSelectedUpload(null);
       setPage(0);
@@ -110,7 +131,7 @@ export function useCabinet() {
     setBusy(true);
     try {
       const res = await api.paste(numbers);
-      notify(`Imported ${res.accepted} of ${res.total}`);
+      notify(importMessage(res), res.summary.rejected > 0 ? "info" : "success");
       closeAdd();
       setSelectedUpload(null);
       setPage(0);
@@ -243,12 +264,65 @@ export function useCabinet() {
     notify("Platform connection saved");
   }
 
+  async function savePushRate(rate: number) {
+    const res = await api.savePushRate(rate);
+    if (res.error) {
+      notify(res.error, "error");
+      return;
+    }
+    setSettings(await api.settings());
+  }
+
+  function uploadSent(batch: Batch) {
+    setSendingUpload(null);
+    notify(`${batch.total} calls queued for Platform`);
+    setBatchesOpen(true);
+  }
+
   async function rotateKey(which: "inbound" | "core") {
     setBusy(true);
     await api.rotateKey(which);
     setSettings(await api.settings());
     setBusy(false);
     notify("New key generated");
+  }
+
+  async function changeEncryption(input: EncryptionInput) {
+    setBusy(true);
+    const res = await api.changeEncryption(input);
+    setSettings(await api.settings());
+    setBusy(false);
+    if (res.error && res.reregistered === undefined) notify(res.error, "error");
+    else if (res.error) notify(`Encryption keys saved; Platform refused the new ones: ${res.error}`, "error");
+    else notify("Encryption keys saved");
+  }
+
+  async function changeLogin(user: string, password: string) {
+    setBusy(true);
+    const res = await api.changeLogin(user, password);
+    setSettings(await api.settings());
+    setBusy(false);
+    if (res.error) notify(res.error, "error");
+    else notify("Login saved");
+  }
+
+  async function changeDecryptKey(key?: string) {
+    setBusy(true);
+    const res = await api.changeDecryptKey(key);
+    setSettings(await api.settings());
+    setBusy(false);
+    if (res.error) notify(res.error, "error");
+    else notify("SIP proxy key saved; the SIP proxy takes it at its next restart, the previous key works until then");
+  }
+
+  async function changeTrunkKey(mode: string, key?: string) {
+    setBusy(true);
+    const res = await api.changeTrunkKey(mode, key);
+    setSettings(await api.settings());
+    setBusy(false);
+    if (res.error && res.synced === undefined) notify(res.error, "error");
+    else if (res.synced) notify(`${mode} key changed; Platform uses it now`);
+    else notify(`${mode} key changed here, Platform not updated yet: ${res.error}. Both keys work until it is; press Change again to retry.`, "error");
   }
 
   async function pushAgain(row: Row) {
@@ -285,7 +359,9 @@ export function useCabinet() {
     askDeleteContact, askDeleteUpload, closeConfirm: () => setConfirm(null), runConfirm,
     dismissToast: () => setToast(null),
     settings, settingsOpen, openSettings, docsOpen, openDocs, closeDocs: () => setDocsOpen(false), closeSettings: () => setSettingsOpen(false),
-    saveCrm, saveWr, rotateKey, testCrm: api.testCrm, resend, pushAgain,
+    saveCrm, saveWr, savePushRate, rotateKey, changeTrunkKey, changeEncryption, changeLogin, changeDecryptKey,
+    sendingUpload, openSendUpload: setSendingUpload, closeSendUpload: () => setSendingUpload(null), uploadSent,
+    batchesOpen, openBatches: () => setBatchesOpen(true), closeBatches: () => setBatchesOpen(false), testCrm: api.testCrm, resend, pushAgain,
     transcriptRow, transcript, transcriptBusy, openTranscript, closeTranscript: () => setTranscriptRow(null),
     requestsRow, requests, openRequests, closeRequests: () => setRequestsRow(null), resendRequest,
   };
