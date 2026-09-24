@@ -1,4 +1,4 @@
-import { PlusIcon, Cog6ToothIcon, BookOpenIcon } from "@heroicons/react/24/outline";
+import { PlusIcon, Cog6ToothIcon, BookOpenIcon, QueueListIcon } from "@heroicons/react/24/outline";
 import { useCabinet } from "./lib/useCabinet";
 import { Button } from "./components/Button";
 import { SearchInput } from "./components/SearchInput";
@@ -12,6 +12,8 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { TranscriptDialog } from "./components/TranscriptDialog";
 import { RequestsDialog } from "./components/RequestsDialog";
 import { DocsDialog } from "./components/DocsDialog";
+import { SendUploadDialog } from "./components/SendUploadDialog";
+import { BatchesDialog } from "./components/BatchesDialog";
 import { Toast } from "./components/Toast";
 import type { BuildInfo } from "./lib/api";
 
@@ -52,6 +54,10 @@ export function Cabinet({
               <PlusIcon className="h-4 w-4" />
               Add numbers
             </Button>
+            <Button mode="function" onClick={c.openBatches}>
+              <QueueListIcon className="h-4 w-4" />
+              Batches
+            </Button>
             <Button mode="function" onClick={c.openDocs}>
               <BookOpenIcon className="h-4 w-4" />
               Docs
@@ -73,6 +79,8 @@ export function Cabinet({
             selected={c.selectedUpload}
             onSelect={c.selectUpload}
             onDelete={c.askDeleteUpload}
+            onSend={c.openSendUpload}
+            streamLabel="CRM stream"
           />
 
           <div className="min-w-0 flex-1">
@@ -107,9 +115,16 @@ export function Cabinet({
         onClose={c.closeSettings}
         onSave={c.saveCrm}
         onSaveWr={c.saveWr}
+        onSavePushRate={c.savePushRate}
         onRotate={c.rotateKey}
+        onChangeTrunkKey={c.changeTrunkKey}
+        onChangeEncryption={c.changeEncryption}
+        onChangeLogin={c.changeLogin}
+        onChangeDecryptKey={c.changeDecryptKey}
         onTest={c.testCrm}
       />
+      <SendUploadDialog upload={c.sendingUpload} onClose={c.closeSendUpload} onSent={c.uploadSent} />
+      <BatchesDialog open={c.batchesOpen} onClose={c.closeBatches} />
       <DocsDialog open={c.docsOpen} settings={c.settings} onClose={c.closeDocs} />
       <TranscriptDialog row={c.transcriptRow} data={c.transcript} busy={c.transcriptBusy} onClose={c.closeTranscript} />
       <RequestsDialog row={c.requestsRow} requests={c.requests} busy={c.busy} onClose={c.closeRequests} onResend={c.resendRequest} />

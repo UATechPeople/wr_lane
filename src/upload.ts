@@ -1,16 +1,5 @@
 import * as XLSX from "xlsx";
 
-// Parses an uploaded CSV or XLSX file (SheetJS handles both) into full player
-// records, matching the WinRiders client-integration list format (guide §2A / §2):
-//   required: external_id, phone_e164
-//   optional: first_name, last_name, country (ISO-3166-1), language (ISO-639-1)
-//   targeting: segment (-> player_segment), cohort
-// Only phone_e164 is secret — it gets tokenized later; everything else passes through.
-//
-// Auto-detection matches ONLY the canonical field names (plus obvious phone synonyms).
-// Custom/localized headers are resolved via an explicit `headerMap` (your header ->
-// our field), exactly like the guide's header map. We do NOT guess localized headers.
-
 export type UploadRecord = {
   phone: string;
   user_id?: string;
@@ -20,6 +9,7 @@ export type UploadRecord = {
   language?: string;
   segment?: string;
   cohort?: string;
+  webhook_url?: string;
 };
 
 export type HeaderMap = Record<string, keyof UploadRecord>;
@@ -33,6 +23,7 @@ const FIELD_ALIASES: Record<keyof UploadRecord, string[]> = {
   language: ["language"],
   segment: ["segment", "player_segment"],
   cohort: ["cohort"],
+  webhook_url: ["webhook_url", "result_webhook", "webhook"],
 };
 
 export const FIELDS = Object.keys(FIELD_ALIASES) as (keyof UploadRecord)[];
@@ -43,9 +34,6 @@ function matchField(header: string): keyof UploadRecord | undefined {
   }
   return undefined;
 }
-
-// XLSX is a zip ("PK"); read raw. CSV is text — decode as UTF-8 ourselves, since
-// SheetJS mis-reads UTF-8 CSV bytes as a legacy codepage and mangles Cyrillic.
 function readRows(buf: ArrayBuffer): unknown[][] {
   const bytes = new Uint8Array(buf);
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
@@ -105,6 +93,7 @@ function extract(rows: unknown[][], colOf: Resolved["colOf"], from: number, to: 
       language: cell(rows[i], "language"),
       segment: cell(rows[i], "segment"),
       cohort: cell(rows[i], "cohort"),
+      webhook_url: cell(rows[i], "webhook_url"),
     });
   }
   return out;
@@ -124,8 +113,6 @@ export type Preview = {
   sample: UploadRecord[];
   rowCount: number;
 };
-
-// Parses headers + a few sample rows WITHOUT storing — drives the UI column mapper.
 export function previewFile(buf: ArrayBuffer, headerMap?: HeaderMap): Preview {
   const rows = readRows(buf);
   if (rows.length === 0) {

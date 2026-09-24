@@ -1,4 +1,4 @@
-import { ArrowDownTrayIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { ArrowDownTrayIcon, PaperAirplaneIcon, TrashIcon } from "@heroicons/react/24/outline";
 import type { Upload } from "../lib/api";
 import { cn } from "../lib/cn";
 
@@ -8,12 +8,16 @@ export function UploadsSidebar({
   selected,
   onSelect,
   onDelete,
+  onSend,
+  streamLabel,
 }: {
   uploads: Upload[];
   total: number;
   selected: number | null;
   onSelect: (id: number | null) => void;
   onDelete: (u: Upload) => void;
+  onSend: (u: Upload) => void;
+  streamLabel: string;
 }) {
   const rowBase = "group flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition";
   return (
@@ -41,6 +45,15 @@ export function UploadsSidebar({
                   {u.count} · {u.created_at.slice(0, 10)}
                 </span>
               </button>
+              {u.label !== streamLabel && (
+                <button
+                  title="Send to WinRiders"
+                  onClick={() => onSend(u)}
+                  className={cn("rounded p-1 opacity-0 transition group-hover:opacity-100", active ? "text-neutral-300 hover:text-white" : "text-neutral-400 hover:text-neutral-700")}
+                >
+                  <PaperAirplaneIcon className="h-4 w-4" />
+                </button>
+              )}
               <a
                 href={`/api/uploads/${u.id}/export.csv`}
                 title="Export CSV"
