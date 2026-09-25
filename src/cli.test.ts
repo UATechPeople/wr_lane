@@ -10,6 +10,7 @@ const received: Array<{ method: string; path: string; body: any }> = [];
 let registerReply: { status: number; body: unknown } = { status: 200, body: { registered: true, status: "active", ok: true, trunks: {} } };
 let trunksReplyStatus = 200;
 let syncedKeys: Record<string, string> = {};
+let agentsOn: Record<string, number> = {};
 
 const core = Bun.serve({
   port: 0,
@@ -26,13 +27,13 @@ const core = Bun.serve({
     if (url.pathname.endsWith("/bundle/register")) return Response.json(registerReply.body, { status: registerReply.status });
     if (url.pathname.endsWith("/bundle/trunks")) {
       if (trunksReplyStatus !== 200) return Response.json({ error: { message: "Telephony is not configured in Platform yet" } }, { status: trunksReplyStatus });
-      syncedKeys = { ...syncedKeys, ...(body?.trunks ?? {}) };
-      return Response.json({ ok: true, trunks: {} });
+      syncedKeys = { ...(body?.trunks ?? {}) };
+      return Response.json({ ok: true, trunks: Object.fromEntries(Object.keys(syncedKeys).map((name) => [name, { status: "created" }])) });
     }
     if (url.pathname.endsWith("/bundle/telephony")) {
       const trunks: Record<string, unknown> = { direct: { phoneNumberId: "p1", keyHash: "0000000000000000", voiceServices: 1 } };
       for (const [mode, key] of Object.entries(syncedKeys)) {
-        trunks[mode] = { phoneNumberId: `p-${mode}`, keyHash: createHash("sha256").update(key).digest("hex").slice(0, 16), voiceServices: 1 };
+        trunks[mode] = { phoneNumberId: `p-${mode}`, keyHash: createHash("sha256").update(key).digest("hex").slice(0, 16), voiceServices: 1, voiceServicesWithAgent: agentsOn[mode] ?? 0 };
       }
       return Response.json({ installation: { status: "active" }, trunks });
     }
@@ -47,6 +48,7 @@ beforeEach(() => {
   registerReply = { status: 200, body: { registered: true, status: "active", ok: true, trunks: {} } };
   trunksReplyStatus = 200;
   syncedKeys = {};
+  agentsOn = {};
   for (const key of ["telephony", "public_ip", "bundle_config", "core_installation", "cabinet_domain"]) deleteSetting(key);
 });
 
@@ -116,6 +118,25 @@ describe("cli", () => {
     expect(trunkKeyMode("first_new_trunk_key_0123456789")).toBeNull();
     expect(trunkKeyMode(done.key)).toBe("ipauth");
     expect(syncedKeys.ipauth).toBe(done.key);
+  });
+
+  test("a route gets its own number in Platform and cannot be removed while an agent calls through it", async () => {
+    const { addRouteAndSync, removeRouteAndSync } = await import("./core");
+    const { setCarrier, trunkKeyLookup } = await import("./telephony");
+    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    setCarrier("ipauth", { host: "198.51.100.77" }, "wr_0000test0000key0000test0000key");
+
+    expect(await addRouteAndSync("ipauth", "tdm", "04242")).toEqual({ mode: "ipauth", route: "tdm", synced: true });
+    expect(Object.keys(syncedKeys).sort()).toEqual(["ipauth", "ipauth.tdm"]);
+    expect(trunkKeyLookup(syncedKeys["ipauth.tdm"])).toEqual({ mode: "ipauth", route: "tdm", prefix: "04242" });
+
+    agentsOn["ipauth.tdm"] = 1;
+    await expect(removeRouteAndSync("ipauth", "tdm")).rejects.toThrow(/still used by 1 voice service/);
+    expect(trunkKeyLookup(syncedKeys["ipauth.tdm"])?.route).toBe("tdm");
+
+    agentsOn["ipauth.tdm"] = 0;
+    expect(await removeRouteAndSync("ipauth", "tdm")).toEqual({ mode: "ipauth", route: "tdm", synced: true });
+    expect(Object.keys(syncedKeys)).toEqual(["ipauth"]);
   });
 
   test("a pending registration stops the push worker until a takeover", async () => {

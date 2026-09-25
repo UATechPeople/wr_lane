@@ -5,8 +5,10 @@ import {
   compareTelephonyWithCore,
   connectToCore,
   getCoreState,
+  addRouteAndSync,
   changeTrunkKeyAndSync,
   modesSummary,
+  removeRouteAndSync,
   registerWithCore,
   syncBundleConfig,
   syncTrunks,
@@ -17,6 +19,7 @@ import { FrozenSecretConflict } from "./secrets";
 import { exportKeysEnv } from "./key-settings";
 import { probeOptions } from "./sip-probe";
 import {
+  DEFAULT_ROUTE,
   disableMode,
   finishRotation,
   getDomain,
@@ -26,6 +29,7 @@ import {
   setCarrier,
   setDomain,
   setPublicIp,
+  setRoutePrefix,
   TRUNK_MODES,
   type TrunkMode,
 } from "./telephony";
@@ -172,18 +176,22 @@ export async function doctor(): Promise<Check[]> {
     if (probe.ok) add("ok", `${m.mode}: ${current.host}:${current.port} answers OPTIONS with ${probe.status}${probe.authenticated ? " after authentication" : ""}`);
     else if (probe.stage === "timeout") add("warn", `${m.mode}: ${current.host}:${current.port} does not answer OPTIONS (not whitelisted, or the carrier ignores OPTIONS)`);
     else add(probe.stage === "dns" ? "fail" : "warn", `${m.mode}: ${probe.reason}`);
-    const trunk = comparison?.trunks.find((t) => t.mode === m.mode);
     const beforeTakeover = state === "pending";
-    if (comparison && !trunk?.core) add(beforeTakeover ? "warn" : "fail", `${m.mode}: Platform has no trunk for this mode${beforeTakeover ? " yet; it is created at the takeover" : "; run update.sh --trunks"}`);
-    else if (trunk && trunk.keysMatch === false && !trunk.prevKeyMatches) {
-      add(beforeTakeover ? "warn" : "fail", `${m.mode}: the key Platform sends differs from the one this server accepts${beforeTakeover ? "; it is switched at the takeover" : ""}`);
+    for (const route of m.routes) {
+      const name = route.id === DEFAULT_ROUTE ? m.mode : `${m.mode}.${route.id}`;
+      const trunk = comparison?.trunks.find((t) => t.name === name);
+      const label = route.prefix ? `${name} (prefix ${route.prefix})` : name;
+      if (comparison && !trunk?.core) add(beforeTakeover ? "warn" : "fail", `${label}: Platform has no number for this route${beforeTakeover ? " yet; it is created at the takeover" : "; run update.sh --trunks"}`);
+      else if (trunk && trunk.keysMatch === false && !trunk.prevKeyMatches) {
+        add(beforeTakeover ? "warn" : "fail", `${label}: the key Platform sends differs from the one this server accepts${beforeTakeover ? "; it is switched at the takeover" : ""}`);
+      }
+      else if (trunk && trunk.keysMatch === false && trunk.prevKeyMatches) add("warn", `${label}: key change in progress; Platform still sends the previous key`);
+      else if (trunk) add("ok", `${label}: the trunk key matches Platform`);
+      if (trunk && trunk.voiceServicesWithAgent === 0) add("ok", `${label}: the number is ready; its voice service in Platform waits for an agent`);
     }
-    else if (trunk && trunk.keysMatch === false && trunk.prevKeyMatches) add("warn", `${m.mode}: key rotation in progress; Platform still sends the previous key`);
-    else if (trunk) add("ok", `${m.mode}: the trunk key matches Platform`);
-    if (trunk && trunk.voiceServicesWithAgent === 0) add("ok", `${m.mode}: the number is ready; its voice service in Platform waits for an agent`);
   }
   for (const t of comparison?.trunks ?? []) {
-    if (t.core && !t.local) add("warn", `${t.mode}: Platform still has a trunk for a mode this server does not accept`);
+    if (t.core && !t.local) add("warn", `${t.name}: Platform still has a number for a route this server does not accept`);
   }
 
   const rtp = await rtpenginePing("172.28.0.1:22222", 1500).catch(() => ({ ok: false }));
@@ -275,7 +283,22 @@ export async function run(argv: string[], stdin: () => Promise<string> = readStd
       } else if (sub === "get") {
         const mode = modeArg(third);
         const current = getTelephony().modes[mode];
-        output = current ? { ...current, key: undefined, prevKey: undefined, pass: undefined } : null;
+        output = current ? { ...current, pass: undefined, routes: current.routes.map((r) => ({ id: r.id, prefix: r.prefix, rotating: Boolean(r.prevKey) })) } : null;
+      } else if (sub === "route") {
+        const [, , action, modeName, routeName, routePrefix] = args.filter((x) => !x.startsWith("--"));
+        const mode = modeArg(modeName);
+        if (action === "add") {
+          output = await addRouteAndSync(mode, routeName ?? "", routePrefix ?? "");
+          if (!(output as { synced: boolean }).synced) exitCode = 1;
+        } else if (action === "remove") {
+          output = await removeRouteAndSync(mode, routeName ?? "");
+          if (!(output as { synced: boolean }).synced) exitCode = 1;
+        } else if (action === "prefix") {
+          const route = setRoutePrefix(mode, routeName ?? "", routePrefix ?? "");
+          output = { mode, route: route.id, prefix: route.prefix };
+        } else {
+          throw new CliError("carrier route add <mode> <name> [prefix] | remove <mode> <name> | prefix <mode> <name> <prefix>");
+        }
       } else {
         output = modesSummary();
       }
@@ -299,11 +322,13 @@ export async function run(argv: string[], stdin: () => Promise<string> = readStd
       } else if (sub === "compare") {
         output = await compareTelephonyWithCore();
       } else if (sub === "rotate") {
-        const result = await changeTrunkKeyAndSync(modeArg(third), args.filter((x) => !x.startsWith("--"))[3]);
-        output = { mode: result.mode, synced: result.synced, ...(result.error ? { error: result.error } : {}) };
+        const positional = args.filter((x) => !x.startsWith("--"));
+        const routeFlag = args.find((x) => x.startsWith("--route="))?.slice("--route=".length) ?? DEFAULT_ROUTE;
+        const result = await changeTrunkKeyAndSync(modeArg(third), positional[3], routeFlag);
+        output = { mode: result.mode, route: result.route, synced: result.synced, ...(result.error ? { error: result.error } : {}) };
         if (!result.synced) exitCode = 1;
       } else if (sub === "finish") {
-        output = { mode: third, finished: finishRotation(modeArg(third)) };
+        output = { mode: third, finished: finishRotation(modeArg(third), args.find((x) => x.startsWith("--route="))?.slice("--route=".length) ?? DEFAULT_ROUTE) };
       } else {
         throw new CliError("trunks sync|compare|rotate <mode>|finish <mode>");
       }
@@ -336,7 +361,7 @@ export async function run(argv: string[], stdin: () => Promise<string> = readStd
       break;
     default:
       throw new CliError(
-        "commands: import, status, connect, register [--takeover], sync-config, bundle-env, public-ip <ip>, domain [name|--clear], carrier [set|disable|get <mode>], probe <mode>, trunks sync|compare|rotate|finish, rtpengine-ping [host:port], credentials, password [new], export-keys",
+        "commands: import, status, connect, register [--takeover], sync-config, bundle-env, public-ip <ip>, domain [name|--clear], carrier [set|disable|get <mode>] | carrier route add|remove|prefix <mode> <name> [prefix], probe <mode>, trunks sync|compare|rotate|finish, rtpengine-ping [host:port], credentials, password [new], export-keys",
       );
   }
 

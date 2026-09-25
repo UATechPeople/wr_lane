@@ -4,8 +4,8 @@ import { staticPlugin } from "@elysiajs/static";
 import { openapi } from "@elysiajs/openapi";
 import { config } from "./config";
 import { checkKeysAgainstBase, initKeys, keys, writeSharedDecryptKey } from "./keys";
-import { enabledModes, getTelephony, importLegacyTelephony, TRUNK_MODES, type TrunkMode } from "./telephony";
-import { changeTrunkKeyAndSync, getCoreState, registerWithCore } from "./core";
+import { DEFAULT_ROUTE, enabledModes, getTelephony, importLegacyTelephony, setRoutePrefix, trunkName, TRUNK_MODES, type ModeState, type TrunkMode } from "./telephony";
+import { addRouteAndSync, changeTrunkKeyAndSync, getCoreState, modesSummary, registerWithCore, removeRouteAndSync } from "./core";
 import { changeDecryptKey, changeEncryptionKeys, changeLogin, decryptKeyPending, encryptionKeysInfo, exportKeysEnv } from "./key-settings";
 import { secretEquals } from "./equals";
 import { internalFetch } from "./internal";
@@ -127,11 +127,21 @@ function verifyToken(token?: string): boolean {
   const [user, exp] = Buffer.from(payload, "base64url").toString().split(":");
   return user === keys.cabinetUser() && Number(exp) > Date.now();
 }
+function enabledMode(value: string): TrunkMode | null {
+  if (!(TRUNK_MODES as readonly string[]).includes(value)) return null;
+  return enabledModes().includes(value as TrunkMode) ? (value as TrunkMode) : null;
+}
+
 function trunkKeys() {
   const state = getTelephony();
-  return enabledModes().map((mode) => {
-    const m = state.modes[mode]!;
-    return { mode, host: m.host, port: m.port, key: m.key, previousKeyAccepted: Boolean(m.prevKey) };
+  return modesSummary().map((m) => {
+    const current = state.modes[m.mode] as ModeState;
+    return {
+      mode: m.mode,
+      host: m.host,
+      port: m.port,
+      routes: current.routes.map((r) => ({ id: r.id, name: trunkName(m.mode, r.id), prefix: r.prefix, key: r.key, previousKeyAccepted: Boolean(r.prevKey) })),
+    };
   });
 }
 
@@ -445,21 +455,74 @@ const api = new Elysia({ prefix: "/api" })
   .post(
     "/settings/trunks/:mode/key",
     async ({ params, body, set }) => {
-      if (!(TRUNK_MODES as readonly string[]).includes(params.mode) || !enabledModes().includes(params.mode as TrunkMode)) {
+      const mode = enabledMode(params.mode);
+      if (!mode) {
         set.status = 404;
         return { error: `${params.mode} is not enabled` };
       }
-      const key = body?.key?.trim() || undefined;
       try {
-        const result = await changeTrunkKeyAndSync(params.mode as TrunkMode, key);
+        const result = await changeTrunkKeyAndSync(mode, body?.key?.trim() || undefined, body?.route?.trim() || DEFAULT_ROUTE);
         return { ...result, trunks: trunkKeys() };
       } catch (e) {
         set.status = 422;
-        return { error: "the key must be 16-128 letters, digits, _ or -" };
+        return { error: (e as Error).message };
       }
     },
-    { body: t.Optional(t.Object({ key: t.Optional(t.String({ maxLength: 128 })) })) },
+    { body: t.Optional(t.Object({ key: t.Optional(t.String({ maxLength: 128 })), route: t.Optional(t.String({ maxLength: 32 })) })) },
   )
+
+  .post(
+    "/settings/trunks/:mode/routes",
+    async ({ params, body, set }) => {
+      const mode = enabledMode(params.mode);
+      if (!mode) {
+        set.status = 404;
+        return { error: `${params.mode} is not enabled` };
+      }
+      try {
+        const result = await addRouteAndSync(mode, body.route, body.prefix ?? "");
+        return { ...result, trunks: trunkKeys() };
+      } catch (e) {
+        set.status = 422;
+        return { error: (e as Error).message };
+      }
+    },
+    { body: t.Object({ route: t.String({ maxLength: 32 }), prefix: t.Optional(t.String({ maxLength: 16 })) }) },
+  )
+
+  .put(
+    "/settings/trunks/:mode/routes/:route",
+    ({ params, body, set }) => {
+      const mode = enabledMode(params.mode);
+      if (!mode) {
+        set.status = 404;
+        return { error: `${params.mode} is not enabled` };
+      }
+      try {
+        setRoutePrefix(mode, params.route, body.prefix);
+        return { trunks: trunkKeys() };
+      } catch (e) {
+        set.status = 422;
+        return { error: (e as Error).message };
+      }
+    },
+    { body: t.Object({ prefix: t.String({ maxLength: 16 }) }) },
+  )
+
+  .delete("/settings/trunks/:mode/routes/:route", async ({ params, set }) => {
+    const mode = enabledMode(params.mode);
+    if (!mode) {
+      set.status = 404;
+      return { error: `${params.mode} is not enabled` };
+    }
+    try {
+      const result = await removeRouteAndSync(mode, params.route);
+      return { ...result, trunks: trunkKeys() };
+    } catch (e) {
+      set.status = 422;
+      return { error: (e as Error).message };
+    }
+  })
 
   .put(
     "/settings/push",

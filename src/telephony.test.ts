@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { deleteSetting } from "./db";
 import {
+  addRoute,
   changeTrunkKey,
   disableMode,
   getDomain,
@@ -14,6 +15,9 @@ import {
   setCarrier,
   setDomain,
   setPublicIp,
+  removeRoute,
+  setRoutePrefix,
+  trunkKeyLookup,
   trunkKeyMode,
   trunkKeysForCore,
 } from "./telephony";
@@ -38,7 +42,7 @@ describe("telephony", () => {
   test("a 0.3.1 env brings over the live mode with its key so the existing trunk keeps working", () => {
     expect(importLegacyTelephony(SERVER_ENV)).toEqual(["ipauth"]);
     const state = getTelephony();
-    expect(state.modes.ipauth).toEqual({ host: "198.51.100.77", port: 5060, prefix: "555#", key: "TESTKEY0123456789ab" });
+    expect(state.modes.ipauth).toEqual({ host: "198.51.100.77", port: 5060, routes: [{ id: "default", prefix: "555#", key: "TESTKEY0123456789ab" }] });
     expect(state.modes.digest).toBeUndefined();
     expect(state.modes.direct).toBeUndefined();
     expect(kamailioConfig().publicIp).toBe("203.0.113.233");
@@ -49,7 +53,7 @@ describe("telephony", () => {
     setCarrier("ipauth", { host: "10.0.0.9", port: 5070, prefix: "" });
     expect(importLegacyTelephony(SERVER_ENV)).toEqual([]);
     expect(getTelephony().modes.ipauth?.host).toBe("10.0.0.9");
-    expect(getTelephony().modes.ipauth?.key).toBe("TESTKEY0123456789ab");
+    expect(getTelephony().modes.ipauth?.routes[0].key).toBe("TESTKEY0123456789ab");
   });
 
   test("placeholder keys and placeholder hosts are never imported as live modes", () => {
@@ -59,12 +63,12 @@ describe("telephony", () => {
 
   test("a new mode gets its own generated key and editing it keeps the key", () => {
     const first = setCarrier("digest", { host: "sip.carrier.example", user: "acme", pass: "s3cret!" });
-    expect(first.key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+    expect(first.routes[0].key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
     expect(first.port).toBe(5060);
     const again = setCarrier("digest", { host: "sip2.carrier.example", port: 5080, user: "acme", pass: "s3cret!" });
-    expect(again.key).toBe(first.key);
+    expect(again.routes[0].key).toBe(first.routes[0].key);
     const other = setCarrier("direct", { host: "10.1.1.1" });
-    expect(other.key).not.toBe(first.key);
+    expect(other.routes[0].key).not.toBe(first.routes[0].key);
     expect(Object.keys(trunkKeysForCore()).sort()).toEqual(["digest", "direct"]);
   });
 
@@ -78,15 +82,16 @@ describe("telephony", () => {
   });
 
   test("rotation keeps the old key accepted until it is finished", () => {
-    const { key: original } = setCarrier("direct", { host: "10.1.1.1" });
+    const original = setCarrier("direct", { host: "10.1.1.1" }).routes[0].key;
     const rotated = rotateKey("direct");
     expect(rotated.prevKey).toBe(original);
     expect(rotated.key).not.toBe(original);
     expect(() => rotateKey("direct")).toThrow(/already rotating/);
-    expect(kamailioConfig().modes.direct).toMatchObject({ key: rotated.key, prevKey: original });
+    expect(trunkKeyMode(original)).toBe("direct");
     expect(trunkKeysForCore().direct).toBe(rotated.key);
     expect(finishRotation("direct")).toBe(true);
-    expect(kamailioConfig().modes.direct).toMatchObject({ key: rotated.key, prevKey: null });
+    expect(trunkKeyMode(original)).toBeNull();
+    expect(trunkKeyMode(rotated.key)).toBe("direct");
     expect(finishRotation("direct")).toBe(false);
   });
 
@@ -126,7 +131,7 @@ describe("telephony", () => {
     setCarrier("ipauth", { host: "198.51.100.77" }, "wr_0000test0000key0000test0000key");
     setCarrier("direct", { host: "sbc.example" });
     expect(trunkKeyMode("wr_0000test0000key0000test0000key")).toBe("ipauth");
-    expect(trunkKeyMode(getTelephony().modes.direct!.key)).toBe("direct");
+    expect(trunkKeyMode(getTelephony().modes.direct!.routes[0].key)).toBe("direct");
     expect(trunkKeyMode("nope")).toBeNull();
     expect(trunkKeyMode("")).toBeNull();
 
@@ -147,5 +152,46 @@ describe("telephony", () => {
     expect(() => changeTrunkKey("ipauth", "short")).toThrow();
     expect(() => changeTrunkKey("digest")).toThrow(/not enabled/);
     expect(changeTrunkKey("ipauth", again.key)).toEqual({ key: again.key, prevKey: null });
+  });
+
+  test("a mode can hold several routes to the same carrier, each with its own prefix and key", () => {
+    setCarrier("ipauth", { host: "198.51.100.77", prefix: "" }, "wr_0000test0000key0000test0000key");
+    const tdm = addRoute("ipauth", "TDM", "04242");
+    expect(tdm).toMatchObject({ id: "tdm", prefix: "04242" });
+    expect(trunkKeysForCore()).toEqual({ ipauth: "wr_0000test0000key0000test0000key", "ipauth.tdm": tdm.key });
+    expect(trunkKeyLookup(tdm.key)).toEqual({ mode: "ipauth", route: "tdm", prefix: "04242" });
+    expect(trunkKeyLookup("wr_0000test0000key0000test0000key")).toEqual({ mode: "ipauth", route: "default", prefix: "" });
+
+    expect(() => addRoute("ipauth", "tdm")).toThrow(/already/);
+    expect(() => addRoute("ipauth", "bad route")).toThrow();
+    expect(() => addRoute("ipauth", "x", "02a")).toThrow();
+    expect(() => addRoute("digest", "x")).toThrow(/not enabled/);
+
+    setRoutePrefix("ipauth", "tdm", "02184");
+    expect(trunkKeyLookup(tdm.key)?.prefix).toBe("02184");
+    setCarrier("ipauth", { host: "198.51.100.78" });
+    expect(trunkKeyLookup(tdm.key)?.prefix).toBe("02184");
+
+    const other = changeTrunkKey("ipauth", "a_route_key_for_tdm_0123", "tdm");
+    expect(other.prevKey).toBe(tdm.key);
+    expect(() => changeTrunkKey("ipauth", "wr_0000test0000key0000test0000key", "tdm")).toThrow(/already belongs to ipauth/);
+    expect(() => changeTrunkKey("ipauth", "a_route_key_for_tdm_0123")).toThrow(/already belongs to ipauth.tdm/);
+
+    expect(() => removeRoute("ipauth", "default")).toThrow(/default route/);
+    expect(removeRoute("ipauth", "tdm")).toBe(true);
+    expect(trunkKeyLookup("a_route_key_for_tdm_0123")).toBeNull();
+    expect(Object.keys(trunkKeysForCore())).toEqual(["ipauth"]);
+    expect(kamailioConfig().modes.ipauth).toMatchObject({ host: "198.51.100.78", key: "wr_0000test0000key0000test0000key", prefix: "", routes: ["default"] });
+  });
+
+  test("routes come back from an exported env", () => {
+    importLegacyTelephony({
+      TRUNK_IPAUTH_API_KEY: "wr_0000test0000key0000test0000key",
+      TRUNK_IPAUTH_HOST: "198.51.100.77",
+      TRUNK_IPAUTH_ROUTE_TDM_FR_KEY: "a_route_key_for_tdm_0123",
+      TRUNK_IPAUTH_ROUTE_TDM_FR_PREFIX: "04242",
+    });
+    expect(trunkKeyLookup("a_route_key_for_tdm_0123")).toEqual({ mode: "ipauth", route: "tdm-fr", prefix: "04242" });
+    expect(getTelephony().modes.ipauth?.routes.every((r) => !r.prevKey)).toBe(true);
   });
 });

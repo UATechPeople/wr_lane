@@ -4,6 +4,7 @@ import { Modal } from "./Modal";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { StatusBadge } from "./StatusBadge";
+import { TelephonyRoutes, type RouteActions } from "./TelephonyRoutes";
 import type { CrmConfig, EncryptionInput, Settings, TestResult, WrConfig } from "../lib/api";
 
 type HeaderPair = { name: string; value: string };
@@ -27,7 +28,7 @@ export function SettingsDialog({
   onSaveWr,
   onSavePushRate,
   onRotate,
-  onChangeTrunkKey,
+  routeActions,
   onChangeEncryption,
   onChangeLogin,
   onChangeDecryptKey,
@@ -41,7 +42,7 @@ export function SettingsDialog({
   onSaveWr: (wr: WrConfig) => void;
   onSavePushRate: (rate: number) => void;
   onRotate: (which: "inbound" | "core") => void;
-  onChangeTrunkKey: (mode: string, key?: string) => void;
+  routeActions: RouteActions;
   onChangeEncryption: (input: EncryptionInput) => void;
   onChangeLogin: (user: string, password: string) => void;
   onChangeDecryptKey: (key?: string) => void;
@@ -52,7 +53,6 @@ export function SettingsDialog({
   const [pairs, setPairs] = useState<HeaderPair[]>([]);
   const [test, setTest] = useState<TestResult | null>(null);
   const [rate, setRate] = useState("");
-  const [newKeys, setNewKeys] = useState<Record<string, string>>({});
   const [ff3, setFf3] = useState({ ff3Key: "", ff3Tweak: "", routeDigit: "" });
   const [login, setLogin] = useState({ user: "", password: "" });
   const [decryptDraft, setDecryptDraft] = useState("");
@@ -63,7 +63,6 @@ export function SettingsDialog({
     setWr(settings.wr);
     setPairs(toPairs(settings.crm.headers));
     setRate(String(settings.pushRatePerMin));
-    setNewKeys({});
     setFf3({ ff3Key: settings.keys.ff3Key, ff3Tweak: settings.keys.ff3Tweak, routeDigit: settings.keys.routeDigit });
     setLogin({ user: settings.keys.cabinetUser, password: settings.keys.cabinetPassword });
     setDecryptDraft("");
@@ -259,49 +258,7 @@ export function SettingsDialog({
           ))}
         </section>
 
-        {settings.trunks.length > 0 && (
-          <section className="flex flex-col gap-3">
-            <h3 className="text-sm font-semibold text-neutral-900">SIP trunk keys</h3>
-            <p className="text-xs text-neutral-500">
-              The key the calling platform sends in <code>X-API-Key</code>. A change reaches Platform at once; until it does,
-              the previous key keeps working, so no call is lost.
-            </p>
-            {settings.trunks.map((trunk) => (
-              <div key={trunk.mode} className="flex flex-col gap-2 rounded-xl border border-neutral-200 px-3 py-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-neutral-800">
-                      {trunk.mode} <span className="font-normal text-neutral-500">→ {trunk.host}:{trunk.port}</span>
-                    </div>
-                    <div className="truncate font-mono text-xs text-neutral-500">{trunk.key}</div>
-                  </div>
-                  {trunk.previousKeyAccepted && <StatusBadge label="previous key still accepted" tone="warning" />}
-                </div>
-                <div className="flex items-end gap-2">
-                  <div className="flex-1">
-                    <Input
-                      label="New key"
-                      value={newKeys[trunk.mode] ?? ""}
-                      placeholder="empty = generate one"
-                      onChange={(e) => setNewKeys({ ...newKeys, [trunk.mode]: e.target.value })}
-                    />
-                  </div>
-                  <Button
-                    mode="function"
-                    disabled={busy}
-                    onClick={() => {
-                      onChangeTrunkKey(trunk.mode, newKeys[trunk.mode]?.trim() || undefined);
-                      setNewKeys({ ...newKeys, [trunk.mode]: "" });
-                    }}
-                  >
-                    <ArrowPathIcon className="h-4 w-4" />
-                    Change
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </section>
-        )}
+        <TelephonyRoutes trunks={settings.trunks} busy={busy} actions={routeActions} />
 
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">

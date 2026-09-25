@@ -27,7 +27,7 @@ describe("internal listener", () => {
   test("the SIP config carries the enabled modes with their keys", async () => {
     const mode = setCarrier("direct", { host: "10.9.9.9" });
     const body = (await call("/config/kamailio").json()) as { modes: Record<string, { key: string; host: string }> };
-    expect(body.modes.direct).toMatchObject({ key: mode.key, host: "10.9.9.9", prevKey: null });
+    expect(body.modes.direct).toMatchObject({ key: mode.routes[0].key, host: "10.9.9.9", routes: ["default"] });
   });
 
   test("trunk-key names the mode of a current or previous key and refuses everything else", async () => {
@@ -38,7 +38,7 @@ describe("internal listener", () => {
         }),
       );
     setCarrier("ipauth", { host: "198.51.100.77" }, "wr_0000test0000key0000test0000key");
-    expect(await (await lookup("wr_0000test0000key0000test0000key")).json()).toEqual({ mode: "ipauth" });
+    expect(await (await lookup("wr_0000test0000key0000test0000key")).json()).toEqual({ mode: "ipauth", route: "default", prefix: "" });
     changeTrunkKey("ipauth", "the_next_trunk_key_0123456789");
     expect((await lookup("the_next_trunk_key_0123456789")).status).toBe(200);
     expect((await lookup("wr_0000test0000key0000test0000key")).status).toBe(200);
