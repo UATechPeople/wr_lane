@@ -15,8 +15,11 @@ const host = z.string().trim().regex(/^[A-Za-z0-9.-]{1,253}$/, "host must be a h
 const port = z.number().int().min(1).max(65535).default(5060);
 const trunkKey = z.string().regex(/^[A-Za-z0-9_-]{16,128}$/);
 
+const prefix = z.string().trim().regex(/^[0-9#*+]{0,16}$/, "prefix may hold digits, #, * and + only");
+const routeId = z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9-]{0,31}$/, "route name may hold latin letters, digits and - only, up to 32");
+
 export const carrierSchemas = {
-  ipauth: z.object({ host, port, prefix: z.string().trim().regex(/^[0-9#*+]{0,16}$/, "prefix may hold digits, #, * and + only").default("") }).strict(),
+  ipauth: z.object({ host, port, prefix: prefix.optional() }).strict(),
   digest: z
     .object({
       host,
@@ -24,9 +27,10 @@ export const carrierSchemas = {
       user: z.string().trim().regex(/^[A-Za-z0-9._~+-]{1,64}$/, "user may hold letters, digits and . _ ~ + - only"),
       pass: z.string().regex(/^[\x21-\x7e]{1,128}$/, "password must be 1-128 printable characters without spaces"),
       realm: z.string().trim().max(128).default(""),
+      prefix: prefix.optional(),
     })
     .strict(),
-  direct: z.object({ host, port }).strict(),
+  direct: z.object({ host, port, prefix: prefix.optional() }).strict(),
 } as const;
 
 export type CarrierInput = {
@@ -36,12 +40,16 @@ export type CarrierInput = {
 };
 
 type Carrier = {
-  ipauth: z.output<typeof carrierSchemas.ipauth>;
-  digest: z.output<typeof carrierSchemas.digest>;
-  direct: z.output<typeof carrierSchemas.direct>;
+  ipauth: Omit<z.output<typeof carrierSchemas.ipauth>, "prefix">;
+  digest: Omit<z.output<typeof carrierSchemas.digest>, "prefix">;
+  direct: Omit<z.output<typeof carrierSchemas.direct>, "prefix">;
 };
 
-export type ModeState<M extends TrunkMode = TrunkMode> = Carrier[M] & { key: string; prevKey?: string };
+export const DEFAULT_ROUTE = "default";
+
+export type TrunkRoute = { id: string; prefix: string; key: string; prevKey?: string };
+
+export type ModeState<M extends TrunkMode = TrunkMode> = Carrier[M] & { routes: TrunkRoute[] };
 
 export type TelephonyState = { modes: { [M in TrunkMode]?: ModeState<M> } };
 
@@ -49,24 +57,60 @@ export function newTrunkKey(): string {
   return `hn${randomBytes(24).toString("base64url")}`;
 }
 
+export function trunkName(mode: TrunkMode, route: string): string {
+  return route === DEFAULT_ROUTE ? mode : `${mode}.${route}`;
+}
+
+function normalizeMode(raw: Record<string, unknown>): ModeState {
+  if (Array.isArray(raw.routes)) return raw as unknown as ModeState;
+  const { key, prevKey, prefix: legacyPrefix, ...carrier } = raw as { key?: string; prevKey?: string; prefix?: string } & Record<string, unknown>;
+  const route: TrunkRoute = { id: DEFAULT_ROUTE, prefix: legacyPrefix ?? "", key: key ?? newTrunkKey() };
+  if (prevKey) route.prevKey = prevKey;
+  return { ...(carrier as unknown as Carrier[TrunkMode]), routes: [route] } as ModeState;
+}
+
 export function getTelephony(): TelephonyState {
   const raw = getSetting(TELEPHONY_KEY);
   if (!raw) return { modes: {} };
-  const parsed = JSON.parse(raw) as TelephonyState;
-  return { modes: parsed.modes ?? {} };
+  const parsed = JSON.parse(raw) as { modes?: Record<string, Record<string, unknown>> };
+  const modes: Partial<Record<TrunkMode, ModeState>> = {};
+  for (const mode of TRUNK_MODES) {
+    const m = parsed.modes?.[mode];
+    if (m) modes[mode] = normalizeMode(m);
+  }
+  return { modes } as TelephonyState;
 }
 
 function saveTelephony(state: TelephonyState): void {
   setSetting(TELEPHONY_KEY, JSON.stringify(state));
 }
 
+function modeOf(state: TelephonyState, mode: TrunkMode): ModeState {
+  const current = state.modes[mode] as ModeState | undefined;
+  if (!current) throw new Error(`${mode} is not enabled`);
+  return current;
+}
+
+function routeOf(current: ModeState, mode: TrunkMode, id: string): TrunkRoute {
+  const route = current.routes.find((r) => r.id === id);
+  if (!route) throw new Error(`${mode} has no route "${id}"`);
+  return route;
+}
+
+function putMode(state: TelephonyState, mode: TrunkMode, value: ModeState): void {
+  (state.modes as Partial<Record<TrunkMode, ModeState>>)[mode] = value;
+}
+
 export function setCarrier<M extends TrunkMode>(mode: M, input: unknown, key?: string): ModeState<M> {
-  const details = carrierSchemas[mode].parse(input) as Carrier[M];
+  const { prefix: defaultPrefix, ...details } = carrierSchemas[mode].parse(input) as Carrier[M] & { prefix?: string };
   const state = getTelephony();
-  const existing = state.modes[mode];
-  const chosenKey = key === undefined ? existing?.key ?? newTrunkKey() : trunkKey.parse(key);
-  const next = { ...details, key: chosenKey, ...(existing?.prevKey ? { prevKey: existing.prevKey } : {}) } as ModeState<M>;
-  state.modes[mode] = next as TelephonyState["modes"][M];
+  const existing = state.modes[mode] as ModeState | undefined;
+  const routes = existing ? existing.routes.map((r) => ({ ...r })) : [{ id: DEFAULT_ROUTE, prefix: "", key: newTrunkKey() }];
+  const primary = routes.find((r) => r.id === DEFAULT_ROUTE)!;
+  if (defaultPrefix !== undefined) primary.prefix = defaultPrefix;
+  if (key !== undefined) primary.key = trunkKey.parse(key);
+  const next = { ...details, routes } as unknown as ModeState<M>;
+  putMode(state, mode, next as ModeState);
   saveTelephony(state);
   return next;
 }
@@ -79,53 +123,94 @@ export function disableMode(mode: TrunkMode): boolean {
   return true;
 }
 
-function putMode(state: TelephonyState, mode: TrunkMode, value: ModeState): void {
-  (state.modes as Partial<Record<TrunkMode, ModeState>>)[mode] = value;
-}
-
-export function rotateKey<M extends TrunkMode>(mode: M): { key: string; prevKey: string } {
+export function addRoute(mode: TrunkMode, id: string, routePrefix = ""): TrunkRoute {
   const state = getTelephony();
-  const current: ModeState<M> | undefined = state.modes[mode];
-  if (!current) throw new Error(`${mode} is not enabled`);
-  if (current.prevKey) throw new Error(`${mode} is already rotating; finish the rotation first`);
-  const rotated: ModeState<M> = { ...current, prevKey: current.key, key: newTrunkKey() };
-  putMode(state, mode, rotated);
+  const current = modeOf(state, mode);
+  const routeIdValue = routeId.parse(id);
+  if (current.routes.some((r) => r.id === routeIdValue)) throw new Error(`${mode} already has a route "${routeIdValue}"`);
+  const route: TrunkRoute = { id: routeIdValue, prefix: prefix.parse(routePrefix), key: newTrunkKey() };
+  putMode(state, mode, { ...current, routes: [...current.routes, route] });
   saveTelephony(state);
-  return { key: rotated.key, prevKey: current.key };
+  return route;
 }
 
-export function changeTrunkKey<M extends TrunkMode>(mode: M, key?: string): { key: string; prevKey: string | null } {
+export function removeRoute(mode: TrunkMode, id: string): boolean {
+  if (id === DEFAULT_ROUTE) throw new Error("the default route stays while the mode is enabled; disable the mode instead");
   const state = getTelephony();
-  const current: ModeState<M> | undefined = state.modes[mode];
-  if (!current) throw new Error(`${mode} is not enabled`);
+  const current = modeOf(state, mode);
+  const routes = current.routes.filter((r) => r.id !== id);
+  if (routes.length === current.routes.length) return false;
+  putMode(state, mode, { ...current, routes });
+  saveTelephony(state);
+  return true;
+}
+
+export function setRoutePrefix(mode: TrunkMode, id: string, routePrefix: string): TrunkRoute {
+  const state = getTelephony();
+  const current = modeOf(state, mode);
+  const route = routeOf(current, mode, id);
+  route.prefix = prefix.parse(routePrefix);
+  putMode(state, mode, current);
+  saveTelephony(state);
+  return route;
+}
+
+export function rotateKey(mode: TrunkMode, id = DEFAULT_ROUTE): { key: string; prevKey: string } {
+  const state = getTelephony();
+  const current = modeOf(state, mode);
+  const route = routeOf(current, mode, id);
+  if (route.prevKey) throw new Error(`${trunkName(mode, id)} is already rotating; finish the rotation first`);
+  const previous = route.key;
+  route.prevKey = previous;
+  route.key = newTrunkKey();
+  putMode(state, mode, current);
+  saveTelephony(state);
+  return { key: route.key, prevKey: previous };
+}
+
+export function changeTrunkKey(mode: TrunkMode, key?: string, id = DEFAULT_ROUTE): { key: string; prevKey: string | null } {
+  const state = getTelephony();
+  const current = modeOf(state, mode);
+  const route = routeOf(current, mode, id);
   const next = key === undefined ? newTrunkKey() : trunkKey.parse(key.trim());
-  if (next === current.key) return { key: next, prevKey: current.prevKey ?? null };
-  const prevKey = current.prevKey ?? current.key;
-  const changed: ModeState<M> = { ...current, key: next, prevKey };
-  if (prevKey === next) delete changed.prevKey;
-  putMode(state, mode, changed);
+  if (next === route.key) return { key: next, prevKey: route.prevKey ?? null };
+  const owner = trunkKeyLookup(next);
+  if (owner && !(owner.mode === mode && owner.route === id)) throw new Error(`this key already belongs to ${trunkName(owner.mode, owner.route)}; every route needs its own key`);
+  const prevKey = route.prevKey ?? route.key;
+  route.key = next;
+  if (prevKey === next) delete route.prevKey;
+  else route.prevKey = prevKey;
+  putMode(state, mode, current);
   saveTelephony(state);
-  return { key: next, prevKey: changed.prevKey ?? null };
+  return { key: next, prevKey: route.prevKey ?? null };
 }
 
-export function trunkKeyMode(key: string | null | undefined): TrunkMode | null {
+export type TrunkKeyMatch = { mode: TrunkMode; route: string; prefix: string };
+
+export function trunkKeyLookup(key: string | null | undefined): TrunkKeyMatch | null {
   if (!key) return null;
   const state = getTelephony();
   for (const mode of TRUNK_MODES) {
-    const m = state.modes[mode];
+    const m = state.modes[mode] as ModeState | undefined;
     if (!m) continue;
-    if (secretEquals(key, m.key) || (m.prevKey && secretEquals(key, m.prevKey))) return mode;
+    for (const route of m.routes) {
+      if (secretEquals(key, route.key) || (route.prevKey && secretEquals(key, route.prevKey))) return { mode, route: route.id, prefix: route.prefix };
+    }
   }
   return null;
 }
 
-export function finishRotation<M extends TrunkMode>(mode: M): boolean {
+export function trunkKeyMode(key: string | null | undefined): TrunkMode | null {
+  return trunkKeyLookup(key)?.mode ?? null;
+}
+
+export function finishRotation(mode: TrunkMode, id = DEFAULT_ROUTE): boolean {
   const state = getTelephony();
-  const current: ModeState<M> | undefined = state.modes[mode];
-  if (!current?.prevKey) return false;
-  const finished: ModeState<M> = { ...current };
-  delete finished.prevKey;
-  putMode(state, mode, finished);
+  const current = state.modes[mode] as ModeState | undefined;
+  const route = current?.routes.find((r) => r.id === id);
+  if (!current || !route?.prevKey) return false;
+  delete route.prevKey;
+  putMode(state, mode, current);
   saveTelephony(state);
   return true;
 }
@@ -135,12 +220,26 @@ export function enabledModes(): TrunkMode[] {
   return TRUNK_MODES.filter((m) => state.modes[m]);
 }
 
-export function trunkKeysForCore(): Partial<Record<TrunkMode, string>> {
+export function trunkKeysForCore(): Record<string, string> {
   const state = getTelephony();
-  const out: Partial<Record<TrunkMode, string>> = {};
+  const out: Record<string, string> = {};
   for (const mode of TRUNK_MODES) {
-    const m = state.modes[mode];
-    if (m) out[mode] = m.key;
+    const m = state.modes[mode] as ModeState | undefined;
+    if (!m) continue;
+    for (const route of m.routes) out[trunkName(mode, route.id)] = route.key;
+  }
+  return out;
+}
+
+export type LocalTrunk = { name: string; mode: TrunkMode; route: TrunkRoute };
+
+export function localTrunks(): LocalTrunk[] {
+  const state = getTelephony();
+  const out: LocalTrunk[] = [];
+  for (const mode of TRUNK_MODES) {
+    const m = state.modes[mode] as ModeState | undefined;
+    if (!m) continue;
+    for (const route of m.routes) out.push({ name: trunkName(mode, route.id), mode, route });
   }
   return out;
 }
@@ -191,10 +290,26 @@ export function kamailioConfig() {
   const state = getTelephony();
   const modes: Record<string, unknown> = {};
   for (const mode of TRUNK_MODES) {
-    const m = state.modes[mode];
-    if (m) modes[mode] = { ...m, prevKey: m.prevKey ?? null };
+    const m = state.modes[mode] as ModeState | undefined;
+    if (!m) continue;
+    const { routes, ...carrier } = m;
+    const primary = routes.find((r) => r.id === DEFAULT_ROUTE) ?? routes[0];
+    modes[mode] = { ...carrier, key: primary?.key ?? null, prefix: primary?.prefix ?? "", routes: routes.map((r) => r.id) };
   }
   return { publicIp: getPublicIp(), modes };
+}
+
+function importLegacyRoutes(env: Record<string, string | undefined>, mode: TrunkMode): void {
+  const pattern = new RegExp(`^TRUNK_${mode.toUpperCase()}_ROUTE_([A-Z0-9_]+)_KEY$`);
+  for (const [name, value] of Object.entries(env)) {
+    const match = pattern.exec(name);
+    if (!match || !value?.trim()) continue;
+    const id = match[1].toLowerCase().replace(/_/g, "-");
+    const routePrefix = env[`TRUNK_${mode.toUpperCase()}_ROUTE_${match[1]}_PREFIX`]?.trim() ?? "";
+    const route = addRoute(mode, id, routePrefix);
+    changeTrunkKey(mode, value.trim(), route.id);
+    finishRotation(mode, route.id);
+  }
 }
 
 const LEGACY_PLACEHOLDER_HOSTS = new Set(["", "127.0.0.1"]);
@@ -215,9 +330,9 @@ export function importLegacyTelephony(env: Record<string, string | undefined>): 
     [
       "digest",
       legacyKey(env, "TRUNK_DIGEST_API_KEY"),
-      () => ({ host: hostOf("TRUNK_DIGEST_HOST"), port: portOf("TRUNK_DIGEST_PORT"), user: env.TRUNK_DIGEST_USER?.trim() ?? "", pass: env.TRUNK_DIGEST_PASS ?? "" }),
+      () => ({ host: hostOf("TRUNK_DIGEST_HOST"), port: portOf("TRUNK_DIGEST_PORT"), user: env.TRUNK_DIGEST_USER?.trim() ?? "", pass: env.TRUNK_DIGEST_PASS ?? "", prefix: env.TRUNK_DIGEST_PREFIX?.trim() ?? "" }),
     ],
-    ["direct", legacyKey(env, "TRUNK_DIRECT_API_KEY"), () => ({ host: hostOf("TRUNK_DIRECT_HOST"), port: portOf("TRUNK_DIRECT_PORT") })],
+    ["direct", legacyKey(env, "TRUNK_DIRECT_API_KEY"), () => ({ host: hostOf("TRUNK_DIRECT_HOST"), port: portOf("TRUNK_DIRECT_PORT"), prefix: env.TRUNK_DIRECT_PREFIX?.trim() ?? "" })],
   ];
   for (const [mode, key, details] of candidates) {
     if (!key) continue;
@@ -226,6 +341,7 @@ export function importLegacyTelephony(env: Record<string, string | undefined>): 
     const parsed = carrierSchemas[mode].safeParse(input);
     if (!parsed.success) continue;
     setCarrier(mode, parsed.data, key);
+    importLegacyRoutes(env, mode);
     imported.push(mode);
   }
   if (imported.length === 0) saveTelephony({ modes: {} });

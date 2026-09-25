@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, invertMap, type Batch, type CrmConfig, type Preview, type RequestRow, type Row, type EncryptionInput, type Settings, type UploadResult, type Transcript, type Upload, type WrConfig } from "./api";
+import { api, invertMap, type Batch, type CrmConfig, type Preview, type RequestRow, type Row, type EncryptionInput, type Settings, type TrunkChange, type UploadResult, type Transcript, type Upload, type WrConfig } from "./api";
 import type { ToastData, ToastTone } from "../components/Toast";
 
 const PAGE_SIZE = 25;
@@ -315,15 +315,36 @@ export function useCabinet() {
     else notify("SIP proxy key saved; the SIP proxy takes it at its next restart, the previous key works until then");
   }
 
-  async function changeTrunkKey(mode: string, key?: string) {
+  async function trunkAction(run: () => Promise<TrunkChange>, done: string, pending: string) {
     setBusy(true);
-    const res = await api.changeTrunkKey(mode, key);
+    const res = await run();
     setSettings(await api.settings());
     setBusy(false);
     if (res.error && res.synced === undefined) notify(res.error, "error");
-    else if (res.synced) notify(`${mode} key changed; WinRiders uses it now`);
-    else notify(`${mode} key changed here, WinRiders not updated yet: ${res.error}. Both keys work until it is; press Change again to retry.`, "error");
+    else if (res.synced === false) notify(`${pending}: ${res.error}`, "error");
+    else notify(done);
   }
+
+  const trunkName = (mode: string, route: string) => (route === "default" ? mode : `${mode}.${route}`);
+
+  const routeActions = {
+    onChangeKey: (mode: string, route: string, key?: string) =>
+      trunkAction(
+        () => api.changeTrunkKey(mode, route, key),
+        `${trunkName(mode, route)} key changed; WinRiders uses it now`,
+        `${trunkName(mode, route)} key changed here, WinRiders not updated yet; both keys work until it is, press Change key again to retry`,
+      ),
+    onAddRoute: (mode: string, route: string, prefix: string) =>
+      trunkAction(
+        () => api.addRoute(mode, route, prefix),
+        `route ${trunkName(mode, route.toLowerCase())} added; WinRiders created its number and voice service`,
+        `route added here, WinRiders has not created its number yet; run update.sh --trunks or add the route again later`,
+      ),
+    onSetPrefix: (mode: string, route: string, prefix: string) =>
+      trunkAction(() => api.setRoutePrefix(mode, route, prefix), `${trunkName(mode, route)} now dials ${prefix || "without a prefix"}`, "prefix not saved"),
+    onRemoveRoute: (mode: string, route: string) =>
+      trunkAction(() => api.removeRoute(mode, route), `route ${trunkName(mode, route)} removed`, "route removed here, WinRiders has not dropped its number yet"),
+  };
 
   async function pushAgain(row: Row) {
     setBusy(true);
@@ -359,7 +380,7 @@ export function useCabinet() {
     askDeleteContact, askDeleteUpload, closeConfirm: () => setConfirm(null), runConfirm,
     dismissToast: () => setToast(null),
     settings, settingsOpen, openSettings, docsOpen, openDocs, closeDocs: () => setDocsOpen(false), closeSettings: () => setSettingsOpen(false),
-    saveCrm, saveWr, savePushRate, rotateKey, changeTrunkKey, changeEncryption, changeLogin, changeDecryptKey,
+    saveCrm, saveWr, savePushRate, rotateKey, routeActions, changeEncryption, changeLogin, changeDecryptKey,
     sendingUpload, openSendUpload: setSendingUpload, closeSendUpload: () => setSendingUpload(null), uploadSent,
     batchesOpen, openBatches: () => setBatchesOpen(true), closeBatches: () => setBatchesOpen(false), testCrm: api.testCrm, resend, pushAgain,
     transcriptRow, transcript, transcriptBusy, openTranscript, closeTranscript: () => setTranscriptRow(null),

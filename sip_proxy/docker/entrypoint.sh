@@ -43,7 +43,6 @@ load_from_cabinet() {
             fi
         fi
     done
-    export "TRUNK_IPAUTH_PREFIX=$(echo "$CONFIG" | jq -r '.modes.ipauth.prefix // empty')"
     export "TRUNK_DIGEST_USER=$(echo "$CONFIG" | jq -r '.modes.digest.user // empty')"
     export "TRUNK_DIGEST_PASS=$(echo "$CONFIG" | jq -r '.modes.digest.pass // empty')"
     echo "[entrypoint] SIP config taken from the cabinet"

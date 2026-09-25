@@ -74,7 +74,7 @@ export type Settings = {
   coreKey: string | null;
   defaults: CrmConfig;
   pushRatePerMin: number;
-  trunks: TrunkKey[];
+  trunks: TrunkMode[];
   keys: CabinetKeys;
 };
 
@@ -94,9 +94,11 @@ export type EncryptionInput = { generate: true } | { ff3Key: string; ff3Tweak: s
 
 export type KeyChangeResult = { error?: string; reregistered?: string };
 
-export type TrunkKey = { mode: "ipauth" | "digest" | "direct"; host: string; port: number; key: string; previousKeyAccepted: boolean };
+export type TrunkRoute = { id: string; name: string; prefix: string; key: string; previousKeyAccepted: boolean };
 
-export type TrunkKeyChange = { mode: string; key?: string; synced?: boolean; error?: string };
+export type TrunkMode = { mode: "ipauth" | "digest" | "direct"; host: string; port: number; routes: TrunkRoute[] };
+
+export type TrunkChange = { mode?: string; route?: string; key?: string; synced?: boolean; error?: string };
 
 export type Batch = {
   id: number;
@@ -240,12 +242,26 @@ export const api = {
     fetch("/api/settings/login", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ user, password }) }).then(json),
   changeDecryptKey: (key?: string): Promise<KeyChangeResult> =>
     fetch("/api/settings/decrypt-key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(key ? { key } : {}) }).then(json),
-  changeTrunkKey: (mode: string, key?: string): Promise<TrunkKeyChange> =>
+  changeTrunkKey: (mode: string, route: string, key?: string): Promise<TrunkChange> =>
     fetch(`/api/settings/trunks/${mode}/key`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(key ? { key } : {}),
+      body: JSON.stringify(key ? { key, route } : { route }),
     }).then(json),
+  addRoute: (mode: string, route: string, prefix: string): Promise<TrunkChange> =>
+    fetch(`/api/settings/trunks/${mode}/routes`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ route, prefix }),
+    }).then(json),
+  setRoutePrefix: (mode: string, route: string, prefix: string): Promise<TrunkChange> =>
+    fetch(`/api/settings/trunks/${mode}/routes/${encodeURIComponent(route)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prefix }),
+    }).then(json),
+  removeRoute: (mode: string, route: string): Promise<TrunkChange> =>
+    fetch(`/api/settings/trunks/${mode}/routes/${encodeURIComponent(route)}`, { method: "DELETE" }).then(json),
   testCrm: (): Promise<TestResult> => fetch("/api/settings/test", { method: "POST" }).then(json),
   resend: (id: number): Promise<{ queued?: boolean; error?: string }> =>
     fetch(`/api/numbers/${id}/resend`, { method: "POST" }).then(json),

@@ -117,7 +117,7 @@ export function Cabinet({
         onSaveWr={c.saveWr}
         onSavePushRate={c.savePushRate}
         onRotate={c.rotateKey}
-        onChangeTrunkKey={c.changeTrunkKey}
+        routeActions={c.routeActions}
         onChangeEncryption={c.changeEncryption}
         onChangeLogin={c.changeLogin}
         onChangeDecryptKey={c.changeDecryptKey}

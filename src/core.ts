@@ -2,7 +2,26 @@ import axios from "axios";
 import { createHash, randomBytes } from "crypto";
 import { getSetting, setSetting } from "./db";
 import { keys, setClientPrefix } from "./keys";
-import { changeTrunkKey, enabledModes, finishRotation, getDomain, getPublicIp, getTelephony, saveBundleConfig, setDomain, setPublicIp, trunkKeysForCore, TRUNK_MODES, type TrunkMode } from "./telephony";
+import {
+  addRoute,
+  changeTrunkKey,
+  DEFAULT_ROUTE,
+  enabledModes,
+  finishRotation,
+  getDomain,
+  getPublicIp,
+  getTelephony,
+  localTrunks,
+  removeRoute,
+  saveBundleConfig,
+  setDomain,
+  setPublicIp,
+  trunkKeysForCore,
+  trunkName,
+  TRUNK_MODES,
+  type ModeState,
+  type TrunkMode,
+} from "./telephony";
 import { buildInfo } from "./version";
 import { getCoreKey, getWrConfig, saveWrConfig, setCoreKey } from "./webhook";
 
@@ -134,7 +153,9 @@ export async function syncTrunks(): Promise<{ httpStatus: number; body: Record<s
 export const keyHash = (key: string) => createHash("sha256").update(key).digest("hex").slice(0, 16);
 
 export type TrunkComparison = {
+  name: string;
   mode: TrunkMode;
+  route: string;
   local: boolean;
   core: boolean;
   keysMatch: boolean | null;
@@ -143,6 +164,12 @@ export type TrunkComparison = {
   prevKeyMatches: boolean;
 };
 
+function splitTrunkName(name: string): { mode: TrunkMode; route: string } | null {
+  const [mode, route] = name.split(".", 2);
+  if (!(TRUNK_MODES as readonly string[]).includes(mode)) return null;
+  return { mode: mode as TrunkMode, route: route ?? DEFAULT_ROUTE };
+}
+
 export async function compareTelephonyWithCore(): Promise<{
   installation: Record<string, unknown>;
   thisInstallation: string;
@@ -150,43 +177,89 @@ export async function compareTelephonyWithCore(): Promise<{
 }> {
   const res = await coreRequest<{
     installation: Record<string, unknown>;
-    trunks: Partial<Record<TrunkMode, { phoneNumberId: string; keyHash: string; voiceServices: number; voiceServicesWithAgent?: number }>>;
+    trunks: Record<string, { phoneNumberId: string; keyHash: string; voiceServices: number; voiceServicesWithAgent?: number }>;
   }>("GET", "telephony");
   if (res.status !== 200) throw new Error(describeFailure(res.status, res.data));
-  const local = getTelephony();
-  const trunks = TRUNK_MODES.filter((m) => local.modes[m] || res.data.trunks[m]).map((mode) => {
-    const mine = local.modes[mode];
-    const theirs = res.data.trunks[mode];
-    return {
-      mode,
+  const local = new Map(localTrunks().map((t) => [t.name, t]));
+  const names = [...new Set([...local.keys(), ...Object.keys(res.data.trunks ?? {})])].sort();
+  const trunks: TrunkComparison[] = [];
+  for (const name of names) {
+    const parts = splitTrunkName(name);
+    if (!parts) continue;
+    const mine = local.get(name)?.route;
+    const theirs = res.data.trunks?.[name];
+    trunks.push({
+      name,
+      mode: parts.mode,
+      route: parts.route,
       local: Boolean(mine),
       core: Boolean(theirs),
       keysMatch: mine && theirs ? keyHash(mine.key) === theirs.keyHash : null,
       voiceServices: theirs?.voiceServices ?? 0,
       voiceServicesWithAgent: theirs?.voiceServicesWithAgent ?? theirs?.voiceServices ?? 0,
       prevKeyMatches: Boolean(mine?.prevKey && theirs && keyHash(mine.prevKey) === theirs.keyHash),
-    };
-  });
+    });
+  }
   return { installation: res.data.installation, thisInstallation: keys.installationId, trunks };
 }
 
-export type TrunkKeyChange = { mode: TrunkMode; key: string; synced: boolean; error?: string };
+export type TrunkKeyChange = { mode: TrunkMode; route: string; key: string; synced: boolean; error?: string };
 
-export async function changeTrunkKeyAndSync(mode: TrunkMode, key?: string): Promise<TrunkKeyChange> {
-  const changed = changeTrunkKey(mode, key);
-  if (!changed.prevKey) return { mode, key: changed.key, synced: true };
+function syncError(sync: { httpStatus: number; body: Record<string, unknown> }): string {
+  const message = (sync.body as { error?: { message?: string } }).error?.message;
+  return message ?? `WinRiders has not taken the change yet (HTTP ${sync.httpStatus})`;
+}
+
+export async function changeTrunkKeyAndSync(mode: TrunkMode, key?: string, route = DEFAULT_ROUTE): Promise<TrunkKeyChange> {
+  const changed = changeTrunkKey(mode, key, route);
+  if (!changed.prevKey) return { mode, route, key: changed.key, synced: true };
   try {
     const sync = await syncTrunks();
     const compare = await compareTelephonyWithCore();
-    const row = compare.trunks.find((t) => t.mode === mode);
+    const row = compare.trunks.find((t) => t.name === trunkName(mode, route));
     if (row?.keysMatch === true) {
-      finishRotation(mode);
-      return { mode, key: changed.key, synced: true };
+      finishRotation(mode, route);
+      return { mode, route, key: changed.key, synced: true };
     }
-    const message = (sync.body as { error?: { message?: string } }).error?.message;
-    return { mode, key: changed.key, synced: false, error: message ?? `WinRiders has not taken the new key yet (HTTP ${sync.httpStatus})` };
+    return { mode, route, key: changed.key, synced: false, error: syncError(sync) };
   } catch (e) {
-    return { mode, key: changed.key, synced: false, error: (e as Error).message };
+    return { mode, route, key: changed.key, synced: false, error: (e as Error).message };
+  }
+}
+
+export type RouteChange = { mode: TrunkMode; route: string; synced: boolean; error?: string };
+
+export async function addRouteAndSync(mode: TrunkMode, route: string, prefix = ""): Promise<RouteChange> {
+  const added = addRoute(mode, route, prefix);
+  try {
+    const sync = await syncTrunks();
+    const outcome = (sync.body as { trunks?: Record<string, { status?: string }> }).trunks?.[trunkName(mode, added.id)]?.status;
+    if (sync.httpStatus < 300 && outcome && outcome !== "failed" && outcome !== "skipped") return { mode, route: added.id, synced: true };
+    return { mode, route: added.id, synced: false, error: syncError(sync) };
+  } catch (e) {
+    return { mode, route: added.id, synced: false, error: (e as Error).message };
+  }
+}
+
+export async function removeRouteAndSync(mode: TrunkMode, route: string): Promise<RouteChange> {
+  const name = trunkName(mode, route);
+  let compare: Awaited<ReturnType<typeof compareTelephonyWithCore>>;
+  try {
+    compare = await compareTelephonyWithCore();
+  } catch (e) {
+    throw new Error(`cannot check with WinRiders whether ${name} is still in use: ${(e as Error).message}`);
+  }
+  const row = compare.trunks.find((t) => t.name === name);
+  if (row && row.voiceServicesWithAgent > 0) {
+    throw new Error(`${name} is still used by ${row.voiceServicesWithAgent} voice service(s) with an agent in WinRiders; move them to another route first`);
+  }
+  if (!removeRoute(mode, route)) throw new Error(`${mode} has no route "${route}"`);
+  try {
+    const sync = await syncTrunks();
+    if (sync.httpStatus < 300) return { mode, route, synced: true };
+    return { mode, route, synced: false, error: syncError(sync) };
+  } catch (e) {
+    return { mode, route, synced: false, error: (e as Error).message };
   }
 }
 
@@ -199,7 +272,13 @@ export async function bundleEnvFromCore(): Promise<string> {
 export function modesSummary() {
   const state = getTelephony();
   return enabledModes().map((mode) => {
-    const m = state.modes[mode] as { host: string; port: number; prevKey?: string };
-    return { mode, host: m.host, port: m.port, rotating: Boolean(m.prevKey) };
+    const m = state.modes[mode] as ModeState;
+    return {
+      mode,
+      host: m.host,
+      port: m.port,
+      rotating: m.routes.some((r) => Boolean(r.prevKey)),
+      routes: m.routes.map((r) => ({ id: r.id, prefix: r.prefix, rotating: Boolean(r.prevKey) })),
+    };
   });
 }

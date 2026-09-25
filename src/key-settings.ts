@@ -4,7 +4,7 @@ import { encryptPhoneWith, resetCipher, type FpeKeys } from "./fpe";
 import { DECRYPT_KEY_PREV } from "./internal";
 import { checkKeysAgainstBase, keys, resetKeysCache, writeSharedDecryptKey } from "./keys";
 import { SECRET_SPECS, type SecretName } from "./secrets";
-import { getTelephony, TRUNK_MODES } from "./telephony";
+import { DEFAULT_ROUTE, getTelephony, TRUNK_MODES, type ModeState } from "./telephony";
 
 function validated(name: SecretName, value: string): string {
   const trimmed = value.trim();
@@ -80,13 +80,23 @@ export function exportKeysEnv(): string {
   ];
   const state = getTelephony();
   for (const mode of TRUNK_MODES) {
-    const m = state.modes[mode] as { key: string; host: string; port: number; prefix?: string; user?: string; pass?: string } | undefined;
+    const m = state.modes[mode] as ModeState | undefined;
     if (!m) continue;
+    const carrier = m as unknown as { host: string; port: number; user?: string; pass?: string };
     const M = mode.toUpperCase();
-    lines.push(`TRUNK_${M}_API_KEY=${m.key}`, `TRUNK_${M}_HOST=${m.host}`, `TRUNK_${M}_PORT=${m.port}`);
-    if (m.prefix) lines.push(`TRUNK_${M}_PREFIX=${m.prefix}`);
-    if (m.user) lines.push(`TRUNK_${M}_USER=${m.user}`);
-    if (m.pass) lines.push(`TRUNK_${M}_PASS=${m.pass}`);
+    lines.push(`TRUNK_${M}_HOST=${carrier.host}`, `TRUNK_${M}_PORT=${carrier.port}`);
+    if (carrier.user) lines.push(`TRUNK_${M}_USER=${carrier.user}`);
+    if (carrier.pass) lines.push(`TRUNK_${M}_PASS=${carrier.pass}`);
+    for (const route of m.routes) {
+      if (route.id === DEFAULT_ROUTE) {
+        lines.push(`TRUNK_${M}_API_KEY=${route.key}`);
+        if (route.prefix) lines.push(`TRUNK_${M}_PREFIX=${route.prefix}`);
+      } else {
+        const R = route.id.toUpperCase().replace(/-/g, "_");
+        lines.push(`TRUNK_${M}_ROUTE_${R}_KEY=${route.key}`);
+        if (route.prefix) lines.push(`TRUNK_${M}_ROUTE_${R}_PREFIX=${route.prefix}`);
+      }
+    }
   }
   return lines.join("\n");
 }
