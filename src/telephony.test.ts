@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { deleteSetting } from "./db";
 import {
   addRoute,
+  isSourceAllowed,
+  parseManagedTelephony,
+  planManagedRoutes,
+  saveManagedTelephony,
   changeTrunkKey,
   disableMode,
   getDomain,
@@ -23,7 +27,7 @@ import {
 } from "./telephony";
 
 beforeEach(() => {
-  for (const key of ["telephony", "public_ip", "bundle_config", "cabinet_domain"]) deleteSetting(key);
+  for (const key of ["telephony", "public_ip", "bundle_config", "cabinet_domain", "telephony_managed"]) deleteSetting(key);
 });
 
 const SERVER_ENV = {
@@ -193,5 +197,42 @@ describe("telephony", () => {
     });
     expect(trunkKeyLookup("a_route_key_for_tdm_0123")).toEqual({ mode: "ipauth", route: "tdm-fr", prefix: "04242" });
     expect(getTelephony().modes.ipauth?.routes.every((r) => !r.prevKey)).toBe(true);
+  });
+
+  test("routes and allowed sources set in Platform are parsed strictly", () => {
+    const parsed = parseManagedTelephony({
+      routes: { ipauth: [{ id: "TDM", prefix: "04242" }, { id: "bad id", prefix: "1" }, { id: "x", prefix: "12a" }], sip: [{ id: "y", prefix: "" }] },
+      allowedSources: ["192.0.2.0/24", "10.0.0.1", "nonsense", "300.1.1.1/8"],
+    });
+    expect(parsed.managed).toEqual({ routes: { ipauth: [{ id: "tdm", prefix: "04242" }] }, allowedSources: ["192.0.2.0/24", "10.0.0.1/32"] });
+    expect(parsed.problems.length).toBe(5);
+    expect(parseManagedTelephony(undefined)).toEqual({ managed: {}, problems: [] });
+  });
+
+  test("the plan adds, re-prefixes and removes routes of the enabled modes only", () => {
+    setCarrier("ipauth", { host: "198.51.100.77", prefix: "" }, "wr_0000test0000key0000test0000key");
+    addRoute("ipauth", "old", "7");
+    addRoute("ipauth", "tdm", "1");
+    const plan = planManagedRoutes({ routes: { ipauth: [{ id: "default", prefix: "9" }, { id: "tdm", prefix: "04242" }, { id: "fr", prefix: "5" }], digest: [{ id: "z", prefix: "" }] } });
+    expect(plan).toEqual({
+      add: [{ mode: "ipauth", id: "fr", prefix: "5" }],
+      setPrefix: [
+        { mode: "ipauth", id: "default", prefix: "9" },
+        { mode: "ipauth", id: "tdm", prefix: "04242" },
+      ],
+      remove: [{ mode: "ipauth", id: "old" }],
+    });
+    expect(planManagedRoutes({})).toEqual({ add: [], setPrefix: [], remove: [] });
+  });
+
+  test("an empty allow list lets every source through; a list lets only its networks", () => {
+    expect(isSourceAllowed("203.0.113.9")).toBe(true);
+    saveManagedTelephony({ allowedSources: ["192.0.2.0/24", "10.0.0.1/32"] });
+    expect(isSourceAllowed("192.0.2.17")).toBe(true);
+    expect(isSourceAllowed("10.0.0.1")).toBe(true);
+    expect(isSourceAllowed("10.0.0.2")).toBe(false);
+    expect(isSourceAllowed("198.51.100.253")).toBe(false);
+    expect(isSourceAllowed("")).toBe(false);
+    expect(isSourceAllowed(null)).toBe(false);
   });
 });

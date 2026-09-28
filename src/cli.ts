@@ -23,6 +23,7 @@ import {
   disableMode,
   finishRotation,
   getDomain,
+  getManagedTelephony,
   getPublicIp,
   getTelephony,
   importLegacyTelephony,
@@ -193,6 +194,9 @@ export async function doctor(): Promise<Check[]> {
   for (const t of comparison?.trunks ?? []) {
     if (t.core && !t.local) add("warn", `${t.name}: Platform still has a number for a route this server does not accept`);
   }
+
+  const allowed = getManagedTelephony().allowedSources ?? [];
+  add("ok", allowed.length > 0 ? `SIP is accepted only from ${allowed.join(", ")} (set in Platform)` : "SIP is accepted from any address (no allow list in Platform)");
 
   const rtp = await rtpenginePing("172.28.0.1:22222", 1500).catch(() => ({ ok: false }));
   add(rtp.ok ? "ok" : "fail", rtp.ok ? "rtpengine answers on 172.28.0.1:22222" : "rtpengine does not answer on 172.28.0.1:22222; calls would connect without sound");

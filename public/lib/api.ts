@@ -75,6 +75,7 @@ export type Settings = {
   defaults: CrmConfig;
   pushRatePerMin: number;
   trunks: TrunkMode[];
+  allowedSources: string[];
   keys: CabinetKeys;
 };
 
@@ -96,7 +97,7 @@ export type KeyChangeResult = { error?: string; reregistered?: string };
 
 export type TrunkRoute = { id: string; name: string; prefix: string; key: string; previousKeyAccepted: boolean };
 
-export type TrunkMode = { mode: "ipauth" | "digest" | "direct"; host: string; port: number; routes: TrunkRoute[] };
+export type TrunkMode = { mode: "ipauth" | "digest" | "direct"; host: string; port: number; managed: boolean; routes: TrunkRoute[] };
 
 export type TrunkChange = { mode?: string; route?: string; key?: string; synced?: boolean; error?: string };
 

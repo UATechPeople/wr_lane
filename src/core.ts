@@ -1,3 +1,4 @@
+import { Cron } from "croner";
 import axios from "axios";
 import { createHash, randomBytes } from "crypto";
 import { getSetting, setSetting } from "./db";
@@ -5,6 +6,10 @@ import { keys, setClientPrefix } from "./keys";
 import {
   addRoute,
   changeTrunkKey,
+  parseManagedTelephony,
+  planManagedRoutes,
+  saveManagedTelephony,
+  setRoutePrefix,
   DEFAULT_ROUTE,
   enabledModes,
   finishRotation,
@@ -82,7 +87,75 @@ export async function syncBundleConfig(): Promise<Record<string, unknown>> {
   if (res.status !== 200 || !res.data.config) throw new Error(describeFailure(res.status, res.data));
   const stored = saveBundleConfig(res.data.config);
   setClientPrefix(typeof stored.clientPrefix === "string" && stored.clientPrefix ? stored.clientPrefix : null);
+  await applyManagedTelephony(res.data.config.telephony);
   return res.data.config;
+}
+
+export type ManagedApply = {
+  added: string[];
+  prefixed: string[];
+  removed: string[];
+  keptInUse: string[];
+  problems: string[];
+  synced: boolean | null;
+};
+
+export async function applyManagedTelephony(raw: unknown): Promise<ManagedApply> {
+  const { managed, problems } = parseManagedTelephony(raw);
+  saveManagedTelephony(managed);
+  const result: ManagedApply = { added: [], prefixed: [], removed: [], keptInUse: [], problems, synced: null };
+  const plan = planManagedRoutes(managed);
+  for (const item of plan.add) {
+    addRoute(item.mode, item.id, item.prefix);
+    result.added.push(trunkName(item.mode, item.id));
+  }
+  for (const item of plan.setPrefix) {
+    setRoutePrefix(item.mode, item.id, item.prefix);
+    result.prefixed.push(trunkName(item.mode, item.id));
+  }
+  if (plan.remove.length > 0) {
+    let inUse: Map<string, number> | null = null;
+    try {
+      inUse = new Map((await compareTelephonyWithCore()).trunks.map((t) => [t.name, t.voiceServicesWithAgent]));
+    } catch (e) {
+      result.problems.push(`routes to remove are kept: Platform cannot be asked whether they are in use (${(e as Error).message})`);
+    }
+    for (const item of plan.remove) {
+      const name = trunkName(item.mode, item.id);
+      if (!inUse || (inUse.get(name) ?? 0) > 0) {
+        result.keptInUse.push(name);
+        continue;
+      }
+      removeRoute(item.mode, item.id);
+      result.removed.push(name);
+    }
+  }
+  if (result.added.length > 0 || result.removed.length > 0) {
+    try {
+      const sync = await syncTrunks();
+      result.synced = sync.httpStatus < 300;
+      if (!result.synced) result.problems.push(syncError(sync));
+    } catch (e) {
+      result.synced = false;
+      result.problems.push((e as Error).message);
+    }
+  }
+  if (result.added.length || result.prefixed.length || result.removed.length || result.keptInUse.length || result.problems.length) {
+    console.log(`[hidden-numbers] telephony from Platform: ${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
+export function startManagedConfigCron(pattern = "0 */2 * * * *"): Cron {
+  return new Cron(pattern, { protect: true, name: "bundle-config" }, async () => {
+    const wr = getWrConfig();
+    if (!wr.baseUrl || !wr.slug || !wr.apiKey || getCoreState()?.status !== "active") return;
+    try {
+      await syncBundleConfig();
+    } catch (e) {
+      console.error(`[hidden-numbers] bundle config sync failed: ${(e as Error).message}`);
+    }
+  });
 }
 
 export function ensureCoreKey(): string {
