@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { encryptPhone } from "./fpe";
 import { internalFetch } from "./internal";
 import { keys, setClientPrefix } from "./keys";
-import { changeTrunkKey, setCarrier } from "./telephony";
+import { changeTrunkKey, saveManagedTelephony, setCarrier } from "./telephony";
 
 const call = (path: string, key: string | null = keys.decryptKey()) =>
   internalFetch(new Request(`http://cabinet:3501${path}`, { headers: key === null ? {} : { "x-decrypt-key": key } }));
@@ -45,5 +45,21 @@ describe("internal listener", () => {
     expect((await lookup("guess_guess_guess_guess")).status).toBe(404);
     expect((await lookup(null)).status).toBe(404);
     expect((await lookup("the_next_trunk_key_0123456789", "wrong")).status).toBe(401);
+  });
+
+  test("trunk-key refuses a source outside the allow list set in WinRiders, even with a valid key", async () => {
+    setCarrier("ipauth", { host: "5.129.228.77" }, "wr_0000test0000key0000test0000key");
+    const ask = (ip: string) =>
+      internalFetch(
+        new Request("http://cabinet:3501/trunk-key", {
+          headers: { "x-decrypt-key": keys.decryptKey(), "x-trunk-key": "wr_0000test0000key0000test0000key", "x-source-ip": ip },
+        }),
+      ).status;
+    saveManagedTelephony({});
+    expect(ask("203.0.113.9")).toBe(200);
+    saveManagedTelephony({ allowedSources: ["199.88.252.0/24"] });
+    expect(ask("199.88.252.17")).toBe(200);
+    expect(ask("203.0.113.9")).toBe(403);
+    saveManagedTelephony({});
   });
 });

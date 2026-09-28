@@ -4,8 +4,8 @@ import { staticPlugin } from "@elysiajs/static";
 import { openapi } from "@elysiajs/openapi";
 import { config } from "./config";
 import { checkKeysAgainstBase, initKeys, keys, writeSharedDecryptKey } from "./keys";
-import { DEFAULT_ROUTE, enabledModes, getTelephony, importLegacyTelephony, setRoutePrefix, trunkName, TRUNK_MODES, type ModeState, type TrunkMode } from "./telephony";
-import { addRouteAndSync, changeTrunkKeyAndSync, getCoreState, modesSummary, registerWithCore, removeRouteAndSync } from "./core";
+import { DEFAULT_ROUTE, enabledModes, getManagedTelephony, getTelephony, importLegacyTelephony, isManagedMode, setRoutePrefix, trunkName, TRUNK_MODES, type ModeState, type TrunkMode } from "./telephony";
+import { addRouteAndSync, changeTrunkKeyAndSync, getCoreState, modesSummary, registerWithCore, removeRouteAndSync, startManagedConfigCron } from "./core";
 import { changeDecryptKey, changeEncryptionKeys, changeLogin, decryptKeyPending, encryptionKeysInfo, exportKeysEnv } from "./key-settings";
 import { secretEquals } from "./equals";
 import { internalFetch } from "./internal";
@@ -140,9 +140,14 @@ function trunkKeys() {
       mode: m.mode,
       host: m.host,
       port: m.port,
+      managed: isManagedMode(m.mode),
       routes: current.routes.map((r) => ({ id: r.id, name: trunkName(m.mode, r.id), prefix: r.prefix, key: r.key, previousKeyAccepted: Boolean(r.prevKey) })),
     };
   });
+}
+
+function refuseManaged(mode: TrunkMode): string | null {
+  return isManagedMode(mode) ? `the routes of ${mode} are set in WinRiders (client card); change them there` : null;
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -381,6 +386,7 @@ const api = new Elysia({ prefix: "/api" })
     defaults: DEFAULT_CRM_CONFIG,
     pushRatePerMin: getPushRate(),
     trunks: trunkKeys(),
+    allowedSources: getManagedTelephony().allowedSources ?? [],
     keys: {
       ...encryptionKeysInfo(),
       decryptKey: keys.decryptKey(),
@@ -479,6 +485,11 @@ const api = new Elysia({ prefix: "/api" })
         set.status = 404;
         return { error: `${params.mode} is not enabled` };
       }
+      const managed = refuseManaged(mode);
+      if (managed) {
+        set.status = 409;
+        return { error: managed };
+      }
       try {
         const result = await addRouteAndSync(mode, body.route, body.prefix ?? "");
         return { ...result, trunks: trunkKeys() };
@@ -498,6 +509,11 @@ const api = new Elysia({ prefix: "/api" })
         set.status = 404;
         return { error: `${params.mode} is not enabled` };
       }
+      const managed = refuseManaged(mode);
+      if (managed) {
+        set.status = 409;
+        return { error: managed };
+      }
       try {
         setRoutePrefix(mode, params.route, body.prefix);
         return { trunks: trunkKeys() };
@@ -514,6 +530,11 @@ const api = new Elysia({ prefix: "/api" })
     if (!mode) {
       set.status = 404;
       return { error: `${params.mode} is not enabled` };
+    }
+    const managed = refuseManaged(mode);
+    if (managed) {
+      set.status = 409;
+      return { error: managed };
     }
     try {
       const result = await removeRouteAndSync(mode, params.route);
@@ -810,6 +831,7 @@ const app = new Elysia()
 
 startOutboxCron();
 startPushWorkerCron();
+startManagedConfigCron();
 console.log(`[hidden-numbers] cabinet listening on :${config.port}`);
 Bun.serve({ hostname: config.internal.host, port: config.internal.port, fetch: internalFetch });
 console.log(`[hidden-numbers] internal listener on ${config.internal.host}:${config.internal.port}`);

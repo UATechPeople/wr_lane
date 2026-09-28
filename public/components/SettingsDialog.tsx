@@ -258,7 +258,7 @@ export function SettingsDialog({
           ))}
         </section>
 
-        <TelephonyRoutes trunks={settings.trunks} busy={busy} actions={routeActions} />
+        <TelephonyRoutes trunks={settings.trunks} allowedSources={settings.allowedSources} busy={busy} actions={routeActions} />
 
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">

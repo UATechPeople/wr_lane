@@ -11,6 +11,7 @@ let registerReply: { status: number; body: unknown } = { status: 200, body: { re
 let trunksReplyStatus = 200;
 let syncedKeys: Record<string, string> = {};
 let agentsOn: Record<string, number> = {};
+let managedTelephony: unknown = undefined;
 
 const core = Bun.serve({
   port: 0,
@@ -22,7 +23,7 @@ const core = Bun.serve({
       return new Response("HN_SLUG=acme\nHN_VERSION=0.4.0\nHN_REGISTRY_TOKEN=ghp_x\n", { headers: { "content-type": "text/plain" } });
     }
     if (url.pathname.endsWith("/bundle/config")) {
-      return Response.json({ slug: "acme", config: { clientPrefix: "771000", registry: { token: "ghp_secret" } } });
+      return Response.json({ slug: "acme", config: { clientPrefix: "771000", registry: { token: "ghp_secret" }, ...(managedTelephony ? { telephony: managedTelephony } : {}) } });
     }
     if (url.pathname.endsWith("/bundle/register")) return Response.json(registerReply.body, { status: registerReply.status });
     if (url.pathname.endsWith("/bundle/trunks")) {
@@ -49,6 +50,7 @@ beforeEach(() => {
   trunksReplyStatus = 200;
   syncedKeys = {};
   agentsOn = {};
+  managedTelephony = undefined;
   for (const key of ["telephony", "public_ip", "bundle_config", "core_installation", "cabinet_domain"]) deleteSetting(key);
 });
 
@@ -137,6 +139,35 @@ describe("cli", () => {
     agentsOn["ipauth.tdm"] = 0;
     expect(await removeRouteAndSync("ipauth", "tdm")).toEqual({ mode: "ipauth", route: "tdm", synced: true });
     expect(Object.keys(syncedKeys)).toEqual(["ipauth"]);
+  });
+
+  test("routes set in the WinRiders client card appear here on the next config sync, and leave only when free", async () => {
+    const { syncBundleConfig } = await import("./core");
+    const { setCarrier, trunkKeyLookup, getTelephony, isSourceAllowed, saveManagedTelephony } = await import("./telephony");
+    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    setCarrier("ipauth", { host: "5.129.228.77" }, "wr_0000test0000key0000test0000key");
+
+    managedTelephony = { routes: { ipauth: [{ id: "tdm", prefix: "02183" }] }, allowedSources: ["199.88.252.0/24"] };
+    await syncBundleConfig();
+    expect(Object.keys(syncedKeys).sort()).toEqual(["ipauth", "ipauth.tdm"]);
+    expect(trunkKeyLookup(syncedKeys["ipauth.tdm"])).toEqual({ mode: "ipauth", route: "tdm", prefix: "02183" });
+    expect(isSourceAllowed("203.0.113.9")).toBe(false);
+
+    managedTelephony = { routes: { ipauth: [{ id: "tdm", prefix: "02184" }] } };
+    await syncBundleConfig();
+    expect(trunkKeyLookup(syncedKeys["ipauth.tdm"])?.prefix).toBe("02184");
+    expect(isSourceAllowed("203.0.113.9")).toBe(true);
+
+    agentsOn["ipauth.tdm"] = 1;
+    managedTelephony = { routes: { ipauth: [] } };
+    await syncBundleConfig();
+    expect(getTelephony().modes.ipauth!.routes.map((r) => r.id)).toEqual(["default", "tdm"]);
+
+    agentsOn["ipauth.tdm"] = 0;
+    await syncBundleConfig();
+    expect(getTelephony().modes.ipauth!.routes.map((r) => r.id)).toEqual(["default"]);
+    expect(Object.keys(syncedKeys)).toEqual(["ipauth"]);
+    saveManagedTelephony({});
   });
 
   test("a pending registration stops the push worker until a takeover", async () => {

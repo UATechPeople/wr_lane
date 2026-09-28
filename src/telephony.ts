@@ -244,6 +244,120 @@ export function localTrunks(): LocalTrunk[] {
   return out;
 }
 
+const MANAGED_KEY = "telephony_managed";
+
+export type ManagedRoute = { id: string; prefix: string };
+
+export type ManagedTelephony = { routes?: Partial<Record<TrunkMode, ManagedRoute[]>>; allowedSources?: string[] };
+
+function parseCidr(value: string): { base: number; bits: number } | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,2}))?$/.exec(value.trim());
+  if (!m) return null;
+  const octets = m.slice(1, 5).map(Number);
+  const bits = m[5] === undefined ? 32 : Number(m[5]);
+  if (octets.some((o) => o > 255) || bits > 32) return null;
+  return { base: ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0, bits };
+}
+
+function formatCidr(value: string): string | null {
+  const parsed = parseCidr(value);
+  if (!parsed) return null;
+  const ip = value.trim().split("/")[0];
+  return `${ip}/${parsed.bits}`;
+}
+
+export function parseManagedTelephony(raw: unknown): { managed: ManagedTelephony; problems: string[] } {
+  const managed: ManagedTelephony = {};
+  const problems: string[] = [];
+  if (typeof raw !== "object" || raw === null) return { managed, problems };
+  const input = raw as { routes?: unknown; allowedSources?: unknown };
+  if (typeof input.routes === "object" && input.routes !== null) {
+    const routes: Partial<Record<TrunkMode, ManagedRoute[]>> = {};
+    for (const [mode, list] of Object.entries(input.routes as Record<string, unknown>)) {
+      if (!(TRUNK_MODES as readonly string[]).includes(mode)) {
+        problems.push(`unknown mode "${mode}"`);
+        continue;
+      }
+      const accepted: ManagedRoute[] = [];
+      for (const item of Array.isArray(list) ? list : []) {
+        const id = routeId.safeParse((item as { id?: unknown })?.id);
+        const routePrefix = prefix.safeParse((item as { prefix?: unknown })?.prefix ?? "");
+        if (!id.success || !routePrefix.success) {
+          problems.push(`${mode}: route ${JSON.stringify(item)} is not a valid name and prefix`);
+          continue;
+        }
+        if (!accepted.some((r) => r.id === id.data)) accepted.push({ id: id.data, prefix: routePrefix.data });
+      }
+      routes[mode as TrunkMode] = accepted;
+    }
+    managed.routes = routes;
+  }
+  if (Array.isArray(input.allowedSources)) {
+    const sources: string[] = [];
+    for (const item of input.allowedSources) {
+      const cidr = typeof item === "string" ? formatCidr(item) : null;
+      if (cidr) sources.push(cidr);
+      else problems.push(`allowed source ${JSON.stringify(item)} is not an IPv4 address or network`);
+    }
+    managed.allowedSources = sources;
+  }
+  return { managed, problems };
+}
+
+export function getManagedTelephony(): ManagedTelephony {
+  const raw = getSetting(MANAGED_KEY);
+  return raw ? (JSON.parse(raw) as ManagedTelephony) : {};
+}
+
+export function saveManagedTelephony(managed: ManagedTelephony): void {
+  setSetting(MANAGED_KEY, JSON.stringify(managed));
+}
+
+export function isManagedMode(mode: TrunkMode): boolean {
+  return getManagedTelephony().routes?.[mode] !== undefined;
+}
+
+export function isSourceAllowed(ip: string | null | undefined): boolean {
+  const list = getManagedTelephony().allowedSources ?? [];
+  if (list.length === 0) return true;
+  const address = ip ? parseCidr(ip) : null;
+  if (!address || address.bits !== 32) return false;
+  return list.some((entry) => {
+    const net = parseCidr(entry);
+    if (!net) return false;
+    const mask = net.bits === 0 ? 0 : (0xffffffff << (32 - net.bits)) >>> 0;
+    return (address.base & mask) >>> 0 === (net.base & mask) >>> 0;
+  });
+}
+
+export type ManagedRoutePlan = {
+  add: Array<{ mode: TrunkMode; id: string; prefix: string }>;
+  setPrefix: Array<{ mode: TrunkMode; id: string; prefix: string }>;
+  remove: Array<{ mode: TrunkMode; id: string }>;
+};
+
+export function planManagedRoutes(managed: ManagedTelephony): ManagedRoutePlan {
+  const plan: ManagedRoutePlan = { add: [], setPrefix: [], remove: [] };
+  const state = getTelephony();
+  for (const mode of TRUNK_MODES) {
+    const wanted = managed.routes?.[mode];
+    const current = state.modes[mode] as ModeState | undefined;
+    if (!wanted || !current) continue;
+    for (const route of wanted) {
+      const existing = current.routes.find((r) => r.id === route.id);
+      if (!existing) {
+        if (route.id !== DEFAULT_ROUTE) plan.add.push({ mode, id: route.id, prefix: route.prefix });
+      } else if (existing.prefix !== route.prefix) {
+        plan.setPrefix.push({ mode, id: route.id, prefix: route.prefix });
+      }
+    }
+    for (const route of current.routes) {
+      if (route.id !== DEFAULT_ROUTE && !wanted.some((w) => w.id === route.id)) plan.remove.push({ mode, id: route.id });
+    }
+  }
+  return plan;
+}
+
 export function getPublicIp(): string | null {
   return getSetting(PUBLIC_IP_KEY);
 }
