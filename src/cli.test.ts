@@ -12,6 +12,7 @@ let trunksReplyStatus = 200;
 let syncedKeys: Record<string, string> = {};
 let agentsOn: Record<string, number> = {};
 let managedTelephony: unknown = undefined;
+let corePrefix: string | undefined = "771000";
 
 const core = Bun.serve({
   port: 0,
@@ -23,7 +24,7 @@ const core = Bun.serve({
       return new Response("HN_SLUG=acme\nHN_VERSION=0.4.0\nHN_REGISTRY_TOKEN=ghp_x\n", { headers: { "content-type": "text/plain" } });
     }
     if (url.pathname.endsWith("/bundle/config")) {
-      return Response.json({ slug: "acme", config: { clientPrefix: "771000", registry: { token: "ghp_secret" }, ...(managedTelephony ? { telephony: managedTelephony } : {}) } });
+      return Response.json({ slug: "acme", config: { ...(corePrefix ? { clientPrefix: corePrefix } : {}), registry: { token: "ghp_secret" }, ...(managedTelephony ? { telephony: managedTelephony } : {}) } });
     }
     if (url.pathname.endsWith("/bundle/register")) return Response.json(registerReply.body, { status: registerReply.status });
     if (url.pathname.endsWith("/bundle/trunks")) {
@@ -51,6 +52,7 @@ beforeEach(() => {
   syncedKeys = {};
   agentsOn = {};
   managedTelephony = undefined;
+  corePrefix = "771000";
   for (const key of ["telephony", "public_ip", "bundle_config", "core_installation", "cabinet_domain"]) deleteSetting(key);
 });
 
@@ -168,6 +170,19 @@ describe("cli", () => {
     expect(getTelephony().modes.ipauth!.routes.map((r) => r.id)).toEqual(["default"]);
     expect(Object.keys(syncedKeys)).toEqual(["ipauth"]);
     saveManagedTelephony({});
+  });
+
+  test("a legacy client prefix imported from the old stack survives a Platform config without one", async () => {
+    const { syncBundleConfig } = await import("./core");
+    const { setClientPrefix } = await import("./keys");
+    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    setClientPrefix("123000");
+    corePrefix = undefined;
+    await syncBundleConfig();
+    expect(keys.clientPrefix()).toBe("123000");
+    corePrefix = "771000";
+    await syncBundleConfig();
+    expect(keys.clientPrefix()).toBe("771000");
   });
 
   test("a pending registration stops the push worker until a takeover", async () => {
