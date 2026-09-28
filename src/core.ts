@@ -86,7 +86,7 @@ export async function syncBundleConfig(): Promise<Record<string, unknown>> {
   const res = await coreRequest<{ config?: Record<string, unknown> }>("GET", "config");
   if (res.status !== 200 || !res.data.config) throw new Error(describeFailure(res.status, res.data));
   const stored = saveBundleConfig(res.data.config);
-  setClientPrefix(typeof stored.clientPrefix === "string" && stored.clientPrefix ? stored.clientPrefix : null);
+  if (typeof stored.clientPrefix === "string" && stored.clientPrefix) setClientPrefix(stored.clientPrefix);
   await applyManagedTelephony(res.data.config.telephony);
   return res.data.config;
 }
