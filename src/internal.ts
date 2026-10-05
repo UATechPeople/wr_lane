@@ -1,5 +1,5 @@
 import { decryptToken } from "./fpe";
-import { deleteSetting, getSetting } from "./db";
+import { deleteSetting, getByToken, getSetting } from "./db";
 import { keys } from "./keys";
 import { secretEquals } from "./equals";
 import { isSourceAllowed, kamailioConfig, trunkKeyLookup } from "./telephony";
@@ -11,6 +11,9 @@ function detokenize(url: URL): Response {
   const prefix = keys.clientPrefix();
   if (prefix && digits.length === prefix.length + 15 && digits.startsWith(prefix)) {
     digits = digits.slice(prefix.length);
+  }
+  if (!getByToken(`+${digits}`) && !getByToken(digits)) {
+    return Response.json({ error: "unknown token" }, { status: 404 });
   }
   try {
     return Response.json({ phone: decryptToken(digits) });

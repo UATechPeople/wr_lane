@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createUpload, insertNumbers } from "./db";
 import { encryptPhone } from "./fpe";
 import { internalFetch } from "./internal";
 import { keys, setClientPrefix } from "./keys";
@@ -15,9 +16,18 @@ describe("internal listener", () => {
     expect(call("/anything").status).toBe(404);
   });
 
+  test("detokenize refuses a well-formed token that this cabinet never issued", async () => {
+    setClientPrefix(null);
+    const token = encryptPhone("+491512340000");
+    const res = call(`/detokenize?t=${token.slice(1)}`);
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(await res.json())).not.toContain("491512340000");
+  });
+
   test("detokenize strips the client prefix and returns the real number", async () => {
     setClientPrefix("123000");
     const token = encryptPhone("+491512345678");
+    insertNumbers(createUpload("detokenize"), [{ real: "+491512345678", token }]);
     const res = call(`/detokenize?t=${encodeURIComponent("+123000" + token.slice(1))}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ phone: "+491512345678" });
