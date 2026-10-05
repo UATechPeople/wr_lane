@@ -8,7 +8,7 @@ export function PasteBox({ busy, onSubmit }: { busy: boolean; onSubmit: (text: s
       <textarea
         value={raw}
         onChange={(e) => setRaw(e.target.value)}
-        placeholder="+447700900456, one per line"
+        placeholder="+31687654321, one per line"
         className="block h-36 w-full rounded-xl border border-neutral-300 p-3 font-mono text-sm transition placeholder:text-neutral-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-100"
       />
       <div className="mt-3 flex justify-end">

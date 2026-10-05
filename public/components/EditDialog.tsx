@@ -58,7 +58,7 @@ export function EditDialog({
           label="Phone number"
           value={real}
           onChange={(e) => setReal(e.target.value)}
-          placeholder="+447700900456"
+          placeholder="+31687654321"
           hint="Changing the number re-issues its token."
         />
         <Input label="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="—" />

@@ -2,112 +2,156 @@ import { Database } from "bun:sqlite";
 import { config } from "./config";
 
 const db = new Database(config.dbPath);
-db.run(`
-  CREATE TABLE IF NOT EXISTS uploads (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    label      TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )
-`);
-db.run(`
-  CREATE TABLE IF NOT EXISTS numbers (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    upload_id   INTEGER,
-    real        TEXT NOT NULL UNIQUE,
-    token       TEXT NOT NULL UNIQUE,
-    external_id TEXT,
-    first_name  TEXT,
-    last_name   TEXT,
-    country     TEXT,
-    language    TEXT,
-    segment     TEXT,
-    cohort      TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    pushed_at   TEXT
-  )
-`);
+db.run("PRAGMA busy_timeout = 5000");
+db.run("PRAGMA journal_mode = WAL");
+const migrate = db.transaction(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS uploads (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      label      TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS numbers (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      upload_id   INTEGER,
+      real        TEXT NOT NULL UNIQUE,
+      token       TEXT NOT NULL UNIQUE,
+      external_id TEXT,
+      first_name  TEXT,
+      last_name   TEXT,
+      country     TEXT,
+      language    TEXT,
+      segment     TEXT,
+      cohort      TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      pushed_at   TEXT
+    )
+  `);
 
-const ADDED_NUMBER_COLUMNS: Record<string, string> = {
-  user_id: "TEXT",
-  webhook_id: "TEXT",
-  outcome: "TEXT",
-  result: "TEXT",
-  call_attempts: "INTEGER",
-  result_at: "TEXT",
-  delivery_status: "TEXT",
-  delivered_at: "TEXT",
-  delivery_error: "TEXT",
-};
+  const ADDED_NUMBER_COLUMNS: Record<string, string> = {
+    user_id: "TEXT",
+    webhook_id: "TEXT",
+    outcome: "TEXT",
+    result: "TEXT",
+    call_attempts: "INTEGER",
+    result_at: "TEXT",
+    delivery_status: "TEXT",
+    delivered_at: "TEXT",
+    delivery_error: "TEXT",
+  };
 
-const presentColumns = new Set((db.query("PRAGMA table_info(numbers)").all() as { name: string }[]).map((c) => c.name));
-for (const [name, type] of Object.entries(ADDED_NUMBER_COLUMNS)) {
-  if (!presentColumns.has(name)) db.run(`ALTER TABLE numbers ADD COLUMN ${name} ${type}`);
-}
+  const presentColumns = new Set((db.query("PRAGMA table_info(numbers)").all() as { name: string }[]).map((c) => c.name));
+  for (const [name, type] of Object.entries(ADDED_NUMBER_COLUMNS)) {
+    if (!presentColumns.has(name)) db.run(`ALTER TABLE numbers ADD COLUMN ${name} ${type}`);
+  }
 
-db.run(`
-  CREATE TABLE IF NOT EXISTS settings (
-    key        TEXT PRIMARY KEY,
-    value      TEXT NOT NULL,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )
-`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
 
-db.run(`
-  CREATE TABLE IF NOT EXISTS outbox (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    number_id    INTEGER NOT NULL,
-    dedupe_key   TEXT NOT NULL UNIQUE,
-    payload      TEXT NOT NULL,
-    attempts     INTEGER NOT NULL DEFAULT 0,
-    next_try_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    last_error   TEXT,
-    delivered_at TEXT,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-  )
-`);
-db.run("CREATE INDEX IF NOT EXISTS outbox_pending ON outbox (delivered_at, next_try_at)");
+  db.run(`
+    CREATE TABLE IF NOT EXISTS outbox (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      number_id    INTEGER NOT NULL,
+      dedupe_key   TEXT NOT NULL UNIQUE,
+      payload      TEXT NOT NULL,
+      attempts     INTEGER NOT NULL DEFAULT 0,
+      next_try_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      last_error   TEXT,
+      delivered_at TEXT,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  db.run("CREATE INDEX IF NOT EXISTS outbox_pending ON outbox (delivered_at, next_try_at)");
 
-const ADDED_OUTBOX_COLUMNS: Record<string, string> = { url: "TEXT", call_id: "TEXT" };
+  const ADDED_OUTBOX_COLUMNS: Record<string, string> = { url: "TEXT", call_id: "TEXT" };
 
-const presentOutboxColumns = new Set((db.query("PRAGMA table_info(outbox)").all() as { name: string }[]).map((c) => c.name));
-for (const [name, type] of Object.entries(ADDED_OUTBOX_COLUMNS)) {
-  if (!presentOutboxColumns.has(name)) db.run(`ALTER TABLE outbox ADD COLUMN ${name} ${type}`);
-}
+  const presentOutboxColumns = new Set((db.query("PRAGMA table_info(outbox)").all() as { name: string }[]).map((c) => c.name));
+  for (const [name, type] of Object.entries(ADDED_OUTBOX_COLUMNS)) {
+    if (!presentOutboxColumns.has(name)) db.run(`ALTER TABLE outbox ADD COLUMN ${name} ${type}`);
+  }
 
-db.run(`
-  CREATE TABLE IF NOT EXISTS requests (
-    call_id         TEXT PRIMARY KEY,
-    number_id       INTEGER NOT NULL,
-    webhook_id      TEXT,
-    webhook_url     TEXT,
-    payload         TEXT,
-    segment         TEXT,
-    cohort          TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    pushed_at       TEXT,
-    push_error      TEXT,
-    push_attempts   INTEGER NOT NULL DEFAULT 0,
-    next_push_at    TEXT,
-    lead_id         TEXT,
-    campaign_id     TEXT,
-    outcome         TEXT,
-    result          TEXT,
-    call_attempts   INTEGER,
-    result_at       TEXT,
-    delivery_status TEXT,
-    delivered_at    TEXT,
-    delivery_error  TEXT
-  )
-`);
-db.run("CREATE INDEX IF NOT EXISTS requests_number ON requests (number_id, created_at)");
-db.run("CREATE INDEX IF NOT EXISTS requests_unpushed ON requests (pushed_at, next_push_at)");
+  db.run(`
+    CREATE TABLE IF NOT EXISTS requests (
+      call_id         TEXT PRIMARY KEY,
+      number_id       INTEGER NOT NULL,
+      webhook_id      TEXT,
+      webhook_url     TEXT,
+      payload         TEXT,
+      segment         TEXT,
+      cohort          TEXT,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      pushed_at       TEXT,
+      push_error      TEXT,
+      push_attempts   INTEGER NOT NULL DEFAULT 0,
+      next_push_at    TEXT,
+      lead_id         TEXT,
+      campaign_id     TEXT,
+      outcome         TEXT,
+      result          TEXT,
+      call_attempts   INTEGER,
+      result_at       TEXT,
+      delivery_status TEXT,
+      delivered_at    TEXT,
+      delivery_error  TEXT
+    )
+  `);
+  db.run("CREATE INDEX IF NOT EXISTS requests_number ON requests (number_id, created_at)");
+  db.run("CREATE INDEX IF NOT EXISTS requests_unpushed ON requests (pushed_at, next_push_at)");
 
-const ADDED_REQUEST_COLUMNS: Record<string, string> = { push_attempts: "INTEGER NOT NULL DEFAULT 0", next_push_at: "TEXT" };
+  db.run(`
+    CREATE TABLE IF NOT EXISTS batches (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      source          TEXT NOT NULL,
+      label           TEXT,
+      upload_id       INTEGER,
+      idempotency_key TEXT UNIQUE,
+      response        TEXT,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
 
-const presentRequestColumns = new Set((db.query("PRAGMA table_info(requests)").all() as { name: string }[]).map((c) => c.name));
-for (const [name, type] of Object.entries(ADDED_REQUEST_COLUMNS)) {
-  if (!presentRequestColumns.has(name)) db.run(`ALTER TABLE requests ADD COLUMN ${name} ${type}`);
-}
+  const ADDED_REQUEST_COLUMNS: Record<string, string> = {
+    push_attempts: "INTEGER NOT NULL DEFAULT 0",
+    next_push_at: "TEXT",
+    batch_id: "INTEGER",
+    priority: "INTEGER NOT NULL DEFAULT 0",
+    push_tried_at: "TEXT",
+  };
+
+  const presentRequestColumns = new Set((db.query("PRAGMA table_info(requests)").all() as { name: string }[]).map((c) => c.name));
+  for (const [name, type] of Object.entries(ADDED_REQUEST_COLUMNS)) {
+    if (!presentRequestColumns.has(name)) db.run(`ALTER TABLE requests ADD COLUMN ${name} ${type}`);
+  }
+  db.run("CREATE INDEX IF NOT EXISTS requests_batch ON requests (batch_id)");
+  db.run("CREATE INDEX IF NOT EXISTS requests_push_tried ON requests (push_tried_at)");
+  db.run("CREATE INDEX IF NOT EXISTS requests_queue ON requests (pushed_at, priority, created_at)");
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS upload_numbers (
+      upload_id   INTEGER NOT NULL,
+      number_id   INTEGER NOT NULL,
+      segment     TEXT,
+      cohort      TEXT,
+      webhook_url TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (upload_id, number_id)
+    )
+  `);
+  db.run("CREATE INDEX IF NOT EXISTS upload_numbers_number ON upload_numbers (number_id)");
+  db.run(`
+    INSERT OR IGNORE INTO upload_numbers (upload_id, number_id, segment, cohort, created_at)
+    SELECT upload_id, id, segment, cohort, created_at FROM numbers WHERE upload_id IS NOT NULL
+  `);
+  backfillLegacyRequests();
+});
+
 export function backfillLegacyRequests(): number {
   return db.run(`
   INSERT INTO requests (call_id, number_id, webhook_id, payload, segment, cohort, created_at, pushed_at, lead_id, outcome, result, call_attempts, result_at, delivery_status, delivered_at, delivery_error)
@@ -120,7 +164,7 @@ export function backfillLegacyRequests(): number {
 `).changes;
 }
 
-backfillLegacyRequests();
+migrate.immediate();
 
 export type NumberRow = {
   id: number;
@@ -152,6 +196,7 @@ export type NumberRow = {
 export type NewNumber = {
   real: string;
   token: string;
+  webhook_url?: string;
   user_id?: string;
   webhook_id?: string;
   external_id?: string;
@@ -174,73 +219,103 @@ export function createUpload(label: string): number {
   return Number(db.prepare("INSERT INTO uploads (label) VALUES (?)").run(label).lastInsertRowid);
 }
 
+const UPLOAD_COLS = "u.id, u.label, u.created_at, (SELECT COUNT(*) FROM upload_numbers un WHERE un.upload_id = u.id) AS count";
+
 export function listUploads(): UploadRow[] {
-  return db
-    .query(
-      `SELECT u.id, u.label, u.created_at, COUNT(n.id) AS count
-       FROM uploads u LEFT JOIN numbers n ON n.upload_id = u.id
-       GROUP BY u.id ORDER BY u.id DESC`,
-    )
-    .all() as UploadRow[];
+  return db.query(`SELECT ${UPLOAD_COLS} FROM uploads u ORDER BY u.id DESC`).all() as UploadRow[];
 }
 
 export function getUpload(id: number): UploadRow | null {
-  return (
-    (db
-      .query(
-        `SELECT u.id, u.label, u.created_at, COUNT(n.id) AS count
-         FROM uploads u LEFT JOIN numbers n ON n.upload_id = u.id
-         WHERE u.id = ? GROUP BY u.id`,
-      )
-      .get(id) as UploadRow) ?? null
-  );
+  return (db.query(`SELECT ${UPLOAD_COLS} FROM uploads u WHERE u.id = ?`).get(id) as UploadRow) ?? null;
 }
 
 export function deleteUpload(id: number): boolean {
-  db.prepare("DELETE FROM numbers WHERE upload_id = ?").run(id);
-  return db.prepare("DELETE FROM uploads WHERE id = ?").run(id).changes > 0;
+  const tx = db.transaction((uploadId: number) => {
+    db.prepare(
+      `DELETE FROM numbers
+        WHERE id IN (SELECT number_id FROM upload_numbers WHERE upload_id = ?1)
+          AND id NOT IN (SELECT number_id FROM upload_numbers WHERE upload_id != ?1)`,
+    ).run(uploadId);
+    db.prepare("DELETE FROM upload_numbers WHERE upload_id = ?").run(uploadId);
+    db.prepare("UPDATE numbers SET upload_id = (SELECT MIN(un.upload_id) FROM upload_numbers un WHERE un.number_id = numbers.id) WHERE upload_id = ?").run(uploadId);
+    return db.prepare("DELETE FROM uploads WHERE id = ?").run(uploadId).changes > 0;
+  });
+  return tx(id);
 }
 
 export function rowsForUpload(id: number): NumberRow[] {
-  return db.query(`SELECT ${COLS} FROM numbers WHERE upload_id = ? ORDER BY id`).all(id) as NumberRow[];
+  return db.query(`SELECT ${COLS} FROM numbers WHERE id IN (SELECT number_id FROM upload_numbers WHERE upload_id = ?) ORDER BY id`).all(id) as NumberRow[];
 }
 
-export function insertNumbers(uploadId: number, rows: NewNumber[]): void {
-  const stmt = db.prepare(
+export type UploadMember = { number_id: number; segment: string | null; cohort: string | null; webhook_url: string | null };
+
+export function uploadMembers(id: number): UploadMember[] {
+  return db.query("SELECT number_id, segment, cohort, webhook_url FROM upload_numbers WHERE upload_id = ? ORDER BY number_id").all(id) as UploadMember[];
+}
+
+export type FieldChange = { field: "user_id"; from: string | null; to: string };
+
+export type InsertedNumber = { numberId: number; existed: boolean; changed: FieldChange[] };
+
+export function insertNumbers(uploadId: number, rows: NewNumber[]): InsertedNumber[] {
+  const find = db.prepare("SELECT id, user_id FROM numbers WHERE token = ?");
+  const insert = db.prepare(
     `INSERT INTO numbers
        (upload_id, real, token, user_id, webhook_id, external_id, first_name, last_name, country, language, segment, cohort)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(token) DO UPDATE SET
-       real = excluded.real,
-       user_id = COALESCE(excluded.user_id, numbers.user_id),
-       webhook_id = COALESCE(excluded.webhook_id, numbers.webhook_id)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const update = db.prepare(
+    `UPDATE numbers
+        SET real = ?,
+            user_id = COALESCE(?, user_id),
+            webhook_id = COALESCE(?, webhook_id)
+      WHERE id = ?`,
+  );
+  const member = db.prepare(
+    `INSERT INTO upload_numbers (upload_id, number_id, segment, cohort, webhook_url) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(upload_id, number_id) DO UPDATE SET segment = excluded.segment, cohort = excluded.cohort, webhook_url = excluded.webhook_url`,
   );
   const tx = db.transaction((items: NewNumber[]) => {
+    const out: InsertedNumber[] = [];
     for (const r of items) {
-      stmt.run(
-        uploadId,
-        r.real,
-        r.token,
-        r.user_id ?? null,
-        r.webhook_id ?? null,
-        r.external_id ?? null,
-        r.first_name ?? null,
-        r.last_name ?? null,
-        r.country ?? null,
-        r.language ?? null,
-        r.segment ?? null,
-        r.cohort ?? null,
-      );
+      const existing = find.get(r.token) as { id: number; user_id: string | null } | null;
+      let numberId: number;
+      const changed: FieldChange[] = [];
+      if (existing) {
+        numberId = existing.id;
+        if (r.user_id && r.user_id !== existing.user_id) changed.push({ field: "user_id", from: existing.user_id, to: r.user_id });
+        update.run(r.real, r.user_id ?? null, r.webhook_id ?? null, numberId);
+      } else {
+        numberId = Number(
+          insert.run(
+            uploadId,
+            r.real,
+            r.token,
+            r.user_id ?? null,
+            r.webhook_id ?? null,
+            r.external_id ?? null,
+            r.first_name ?? null,
+            r.last_name ?? null,
+            r.country ?? null,
+            r.language ?? null,
+            r.segment ?? null,
+            r.cohort ?? null,
+          ).lastInsertRowid,
+        );
+      }
+      member.run(uploadId, numberId, r.segment ?? null, r.cohort ?? null, r.webhook_url ?? null);
+      out.push({ numberId, existed: Boolean(existing), changed });
     }
+    return out;
   });
-  tx(rows);
+  return tx(rows);
 }
 
 function filterClause(q?: string, uploadId?: number): { sql: string; params: unknown[] } {
   const conds: string[] = [];
   const params: unknown[] = [];
   if (uploadId != null && !Number.isNaN(uploadId)) {
-    conds.push("upload_id = ?");
+    conds.push("id IN (SELECT number_id FROM upload_numbers WHERE upload_id = ?)");
     params.push(uploadId);
   }
   if (q && q.trim()) {
@@ -297,6 +372,7 @@ export function updateNumber(id: number, patch: Partial<NewNumber>): boolean {
 }
 
 export function deleteNumber(id: number): boolean {
+  db.prepare("DELETE FROM upload_numbers WHERE number_id = ?").run(id);
   return db.prepare("DELETE FROM numbers WHERE id = ?").run(id).changes > 0;
 }
 
@@ -353,6 +429,19 @@ export function setDeliveryState(id: number, status: string, error?: string | nu
 export function getSetting(key: string): string | null {
   const row = db.query("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
   return row?.value ?? null;
+}
+
+export function insertSettingIfAbsent(key: string, value: string): string {
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+  return getSetting(key) as string;
+}
+
+export function sampleTokenPairs(limit: number): { real: string; token: string }[] {
+  return db.query("SELECT real, token FROM numbers ORDER BY id DESC LIMIT ?").all(limit) as { real: string; token: string }[];
+}
+
+export function deleteSetting(key: string): void {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
 }
 
 export function setSetting(key: string, value: string): void {
@@ -458,6 +547,9 @@ export type RequestRow = {
   delivery_status: string | null;
   delivered_at: string | null;
   delivery_error: string | null;
+  batch_id: number | null;
+  priority: number;
+  push_tried_at: string | null;
 };
 
 export type NewRequest = {
@@ -468,16 +560,20 @@ export type NewRequest = {
   payload?: unknown;
   segment?: string | null;
   cohort?: string | null;
+  batch_id?: number | null;
+  priority?: number;
 };
 
 const REQUEST_COLS =
-  "call_id, number_id, webhook_id, webhook_url, payload, segment, cohort, created_at, pushed_at, push_error, push_attempts, next_push_at, lead_id, campaign_id, outcome, result, call_attempts, result_at, delivery_status, delivered_at, delivery_error";
+  "call_id, number_id, webhook_id, webhook_url, payload, segment, cohort, created_at, pushed_at, push_error, push_attempts, next_push_at, lead_id, campaign_id, outcome, result, call_attempts, result_at, delivery_status, delivered_at, delivery_error, batch_id, priority, push_tried_at";
 
-export function insertRequest(r: NewRequest): RequestRow {
-  db.prepare(
-    `INSERT INTO requests (call_id, number_id, webhook_id, webhook_url, payload, segment, cohort)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+const insertRequestStmt = db.prepare(
+  `INSERT INTO requests (call_id, number_id, webhook_id, webhook_url, payload, segment, cohort, batch_id, priority)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+);
+
+function runInsertRequest(r: NewRequest): void {
+  insertRequestStmt.run(
     r.call_id,
     r.number_id,
     r.webhook_id ?? null,
@@ -485,8 +581,21 @@ export function insertRequest(r: NewRequest): RequestRow {
     r.payload === undefined ? null : JSON.stringify(r.payload),
     r.segment ?? null,
     r.cohort ?? null,
+    r.batch_id ?? null,
+    r.priority ?? 0,
   );
+}
+
+export function insertRequest(r: NewRequest): RequestRow {
+  runInsertRequest(r);
   return getRequest(r.call_id) as RequestRow;
+}
+
+export function insertRequests(rows: NewRequest[]): void {
+  const tx = db.transaction((items: NewRequest[]) => {
+    for (const r of items) runInsertRequest(r);
+  });
+  tx(rows);
 }
 
 export function getRequest(callId: string): RequestRow | null {
@@ -506,7 +615,14 @@ export function latestOpenRequestForNumber(numberId: number): RequestRow | null 
 }
 
 export function markRequestPushed(callId: string): void {
-  db.prepare("UPDATE requests SET pushed_at = datetime('now'), push_error = NULL, next_push_at = NULL WHERE call_id = ?").run(callId);
+  inTransaction(() => {
+    db.prepare("UPDATE requests SET pushed_at = datetime('now'), push_error = NULL, next_push_at = NULL WHERE call_id = ?").run(callId);
+    db.prepare("UPDATE numbers SET pushed_at = datetime('now') WHERE id = (SELECT number_id FROM requests WHERE call_id = ?)").run(callId);
+  });
+}
+
+export function inTransaction<T>(fn: () => T): T {
+  return db.transaction(fn)();
 }
 
 export function markRequestPushFailed(callId: string, error: string, delaySeconds: number): void {
@@ -517,6 +633,14 @@ export function markRequestPushFailed(callId: string, error: string, delaySecond
            next_push_at = datetime('now', ?)
      WHERE call_id = ?`,
   ).run(error, `+${Math.max(0, Math.round(delaySeconds))} seconds`, callId);
+}
+
+export function markRequestPushDeferred(callId: string, error: string, delaySeconds: number): void {
+  db.prepare("UPDATE requests SET push_error = ?, next_push_at = datetime('now', ?) WHERE call_id = ?").run(
+    error,
+    `+${Math.max(0, Math.round(delaySeconds))} seconds`,
+    callId,
+  );
 }
 
 export function markRequestPushAbandoned(callId: string, error: string, maxAttempts: number): void {
@@ -530,16 +654,123 @@ export function resetPushSchedule(numberId: number): RequestRow[] {
     .all(numberId) as RequestRow[];
 }
 
-export function duePushRequests(maxAttempts: number, limit = 50): RequestRow[] {
+export function duePushRequests(maxAttempts: number, limit = 50, priority?: number): RequestRow[] {
+  const byPriority = priority === undefined ? "" : "AND priority = ?";
+  const params: (number | string)[] = priority === undefined ? [maxAttempts, limit] : [maxAttempts, priority, limit];
   return db
     .query(
       `SELECT ${REQUEST_COLS} FROM requests
         WHERE pushed_at IS NULL
           AND push_attempts < ?
           AND (next_push_at IS NULL OR next_push_at <= datetime('now'))
-        ORDER BY created_at, rowid LIMIT ?`,
+          ${byPriority}
+        ORDER BY priority, created_at, rowid LIMIT ?`,
     )
-    .all(maxAttempts, limit) as RequestRow[];
+    .all(...params) as RequestRow[];
+}
+
+export function markRequestTried(callId: string): void {
+  db.prepare("UPDATE requests SET push_tried_at = datetime('now') WHERE call_id = ?").run(callId);
+}
+
+export function pushAttemptsInLastMinute(): number {
+  return (db.query("SELECT COUNT(*) AS n FROM requests WHERE push_tried_at >= datetime('now', '-60 seconds')").get() as { n: number }).n;
+}
+
+export type PushQueueStats = { pending: number; due: number; abandoned: number; oldestPendingAt: string | null };
+
+export function pushQueueStats(maxAttempts: number): PushQueueStats {
+  const row = db
+    .query(
+      `SELECT
+         SUM(CASE WHEN pushed_at IS NULL AND push_attempts < ?1 THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN pushed_at IS NULL AND push_attempts < ?1 AND (next_push_at IS NULL OR next_push_at <= datetime('now')) THEN 1 ELSE 0 END) AS due,
+         SUM(CASE WHEN pushed_at IS NULL AND push_attempts >= ?1 THEN 1 ELSE 0 END) AS abandoned,
+         MIN(CASE WHEN pushed_at IS NULL AND push_attempts < ?1 THEN created_at END) AS oldest
+       FROM requests`,
+    )
+    .get(maxAttempts) as { pending: number | null; due: number | null; abandoned: number | null; oldest: string | null };
+  return { pending: row.pending ?? 0, due: row.due ?? 0, abandoned: row.abandoned ?? 0, oldestPendingAt: row.oldest };
+}
+
+export type BatchRow = {
+  id: number;
+  source: string;
+  label: string | null;
+  upload_id: number | null;
+  created_at: string;
+  total: number;
+  pushed: number;
+  queued: number;
+  abandoned: number;
+  results: number;
+  delivered: number;
+};
+
+const BATCH_COLS = `b.id, b.source, b.label, b.upload_id, b.created_at,
+  COUNT(r.call_id) AS total,
+  SUM(CASE WHEN r.pushed_at IS NOT NULL THEN 1 ELSE 0 END) AS pushed,
+  SUM(CASE WHEN r.pushed_at IS NULL AND r.push_attempts < ?1 THEN 1 ELSE 0 END) AS queued,
+  SUM(CASE WHEN r.pushed_at IS NULL AND r.push_attempts >= ?1 THEN 1 ELSE 0 END) AS abandoned,
+  SUM(CASE WHEN r.result_at IS NOT NULL THEN 1 ELSE 0 END) AS results,
+  SUM(CASE WHEN r.delivery_status = 'delivered' THEN 1 ELSE 0 END) AS delivered`;
+
+export function createBatch(input: { source: "hook" | "upload"; label?: string | null; uploadId?: number | null; idempotencyKey?: string | null }): number {
+  return Number(
+    db
+      .prepare("INSERT INTO batches (source, label, upload_id, idempotency_key) VALUES (?, ?, ?, ?)")
+      .run(input.source, input.label ?? null, input.uploadId ?? null, input.idempotencyKey ?? null).lastInsertRowid,
+  );
+}
+
+export function batchResponseByKey(idempotencyKey: string): string | null {
+  const row = db.query("SELECT response FROM batches WHERE idempotency_key = ?").get(idempotencyKey) as { response: string | null } | undefined;
+  return row?.response ?? null;
+}
+
+export function saveBatchResponse(id: number, response: unknown): void {
+  db.prepare("UPDATE batches SET response = ? WHERE id = ?").run(JSON.stringify(response), id);
+}
+
+export function listBatches(maxAttempts: number, limit = 20, offset = 0): { batches: BatchRow[]; total: number } {
+  const batches = db
+    .query(
+      `SELECT ${BATCH_COLS}
+         FROM (SELECT * FROM batches ORDER BY id DESC LIMIT ?2 OFFSET ?3) b
+         LEFT JOIN requests r ON r.batch_id = b.id
+        GROUP BY b.id ORDER BY b.id DESC`,
+    )
+    .all(maxAttempts, limit, offset) as BatchRow[];
+  const total = (db.query("SELECT COUNT(*) AS n FROM batches").get() as { n: number }).n;
+  return { batches, total };
+}
+
+export function getBatch(maxAttempts: number, id: number): BatchRow | null {
+  return (
+    (db.query(`SELECT ${BATCH_COLS} FROM batches b LEFT JOIN requests r ON r.batch_id = b.id WHERE b.id = ?2 GROUP BY b.id`).get(maxAttempts, id) as
+      | BatchRow
+      | undefined) ?? null
+  );
+}
+
+export function batchErrors(maxAttempts: number, id: number, limit = 20): { call_id: string; push_error: string | null; push_attempts: number }[] {
+  return db
+    .query(
+      `SELECT call_id, push_error, push_attempts FROM requests
+        WHERE batch_id = ? AND pushed_at IS NULL AND (push_attempts >= ? OR push_error IS NOT NULL)
+        ORDER BY created_at LIMIT ?`,
+    )
+    .all(id, maxAttempts, limit) as { call_id: string; push_error: string | null; push_attempts: number }[];
+}
+
+export function retryAbandonedInBatch(maxAttempts: number, id: number): number {
+  return db
+    .prepare("UPDATE requests SET push_attempts = 0, next_push_at = NULL WHERE batch_id = ? AND pushed_at IS NULL AND push_attempts >= ?")
+    .run(id, maxAttempts).changes;
+}
+
+export function batchesForUpload(uploadId: number): number[] {
+  return (db.query("SELECT id FROM batches WHERE upload_id = ? ORDER BY id").all(uploadId) as { id: number }[]).map((r) => r.id);
 }
 
 export function recordRequestResult(callId: string, r: CallResult & { campaignId: string | null }): void {

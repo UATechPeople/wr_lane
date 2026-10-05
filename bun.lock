@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "wr-hidden-numbers",
+      "name": "cabinet",
       "dependencies": {
         "@elysiajs/openapi": "^1.4.16",
         "@elysiajs/static": "^1.1.1",
