@@ -8,7 +8,7 @@ type Field = { name: string; type: string; required?: boolean; note: string };
 const INBOUND_FIELDS: Field[] = [
   { name: "phone", type: "string", required: true, note: "The real number in E.164, e.g. +31612345678. Never send a token here." },
   { name: "segment", type: "string", note: "Together with cohort selects the Platform campaign." },
-  { name: "cohort", type: "string", note: "Together with segment selects the Platform campaign, e.g. deau1." },
+  { name: "cohort", type: "string", note: "Together with segment selects the Platform campaign, e.g. c1." },
   { name: "webhook_url", type: "string", note: "Where the result of this call must be posted." },
   { name: "payload", type: "object", note: "Anything you want back with the result — returned untouched. Put user_id here." },
 ];
@@ -133,10 +133,10 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
   -H "Authorization: Bearer ${inbound}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "phone": "+447700900123",
+    "phone": "+31612345678",
     "segment": "hidden",
-    "cohort": "deau1",
-    "webhook_url": "https://crm.example.com/hooks/call-results",
+    "cohort": "c1",
+    "webhook_url": "https://crm.example.com/hidden-numbers/results",
     "payload": { "a": "b", "user_id": "12345" }
   }'`}</Code>
           <p className="text-sm text-neutral-600">Or a batch:</p>
@@ -144,8 +144,8 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
   -H "Authorization: Bearer ${inbound}" \\
   -H "Content-Type: application/json" \\
   -d '[
-    { "phone": "+447700900123", "segment": "hidden", "cohort": "deau1", "payload": { "a": "b", "user_id": "12345" } },
-    { "phone": "+447700900456", "segment": "hidden", "cohort": "nl1", "payload": { "a": "b", "user_id": "12346" } }
+    { "phone": "+31612345678", "segment": "hidden", "cohort": "c1", "payload": { "a": "b", "user_id": "12345" } },
+    { "phone": "+31687654321", "segment": "hidden", "cohort": "c2", "payload": { "a": "b", "user_id": "12346" } }
   ]'`}</Code>
           <p className="text-sm text-neutral-600">Answer — 202, with one row per record:</p>
           <Code>{`{
@@ -153,8 +153,8 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
   "accepted": 2,
   "pushed": { "sent": 2, "failed": 0 },
   "rows": [
-    { "phone": "+447700900123", "token": "+900979118411365", "call_id": "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", "ok": true },
-    { "phone": "+447700900456", "token": "+934219595183482", "call_id": "2b6d4f81-3c5e-4a7b-9d0e-6f1a2b3c4d5e", "ok": true }
+    { "phone": "+31612345678", "token": "+912345678901234", "call_id": "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", "ok": true },
+    { "phone": "+31687654321", "token": "+998877665544332", "call_id": "2b6d4f81-3c5e-4a7b-9d0e-6f1a2b3c4d5e", "ok": true }
   ]
 }`}</Code>
 
@@ -171,7 +171,7 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
             One POST per call, to the request's <code className="rounded bg-neutral-100 px-1 font-mono text-xs">webhook_url</code>, with
             the headers from Settings:
           </p>
-          <Code>{`POST https://crm.example.com/hooks/call-results
+          <Code>{`POST https://crm.example.com/hidden-numbers/results
 Authorization: Bearer <your key>
 Content-Type: application/json
 
@@ -240,7 +240,7 @@ Content-Type: application/json
               { name: "401", type: "unauthorized", note: "Wrong key. Check the Authorization header against Settings." },
               { name: "503", type: "key not configured", note: "The cabinet has no key yet — generate one in Settings." },
               { name: "202 ok: false", type: "on send", note: "That row was refused — the reason is next to it: a token instead of a phone number, a bad webhook_url, an unencryptable number. Other rows are unaffected." },
-              { name: "422 real_number_received", type: "on result", note: "Platform sent a real number instead of a token — tokenisation is bypassed upstream and results are refused until it is fixed." },
+              { name: "422 not_a_token", type: "on result", note: "The result carried something other than a token of this cabinet and was refused. A real number arriving here is also logged in the cabinet as a tokenisation bypass." },
             ]}
           />
         </Section>

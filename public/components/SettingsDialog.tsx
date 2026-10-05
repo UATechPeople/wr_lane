@@ -174,7 +174,7 @@ export function SettingsDialog({
                 type: wr.eventType,
                 event_id: "hn-7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19",
                 player: { external_id: "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", phone_e164: "+913694993501880" },
-                data: { player_segment: "hidden", cohort: "deau1" },
+                data: { player_segment: "hidden", cohort: "c1" },
               },
               null,
               2,

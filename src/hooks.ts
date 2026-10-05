@@ -53,8 +53,8 @@ function guard(headers: Record<string, string | undefined>, expected: string | n
 const PLAYER_EXAMPLE = {
   phone: "+31612345678",
   segment: "hidden",
-  cohort: "deau1",
-  webhook_url: "https://crm.example.com/hooks/call-results",
+  cohort: "c1",
+  webhook_url: "https://crm.example.com/hidden-numbers/results",
   payload: { a: "b", user_id: "12345" },
 };
 
@@ -62,11 +62,11 @@ const playerSchema = t.Object(
   {
     phone: t.String({ description: "Real phone number in E.164. Never a token.", examples: ["+31612345678"] }),
     segment: t.Optional(t.String({ description: "Together with cohort selects the Platform campaign.", examples: ["hidden"] })),
-    cohort: t.Optional(t.String({ description: "Together with segment selects the Platform campaign.", examples: ["deau1"] })),
+    cohort: t.Optional(t.String({ description: "Together with segment selects the Platform campaign.", examples: ["c1"] })),
     webhook_url: t.Optional(
       t.String({
         description: "Where the result of this call must be posted.",
-        examples: ["https://crm.example.com/hooks/call-results"],
+        examples: ["https://crm.example.com/hidden-numbers/results"],
       }),
     ),
     payload: t.Optional(
@@ -125,7 +125,7 @@ const CALL_RESULT_EXAMPLE = {
   event: "call.lost",
   campaignId: "4e5f6a7b-8c9d-4e0f-a1b2-c3d4e5f6a7b8",
   leadId: "9d8c7b6a-5f4e-4d3c-b2a1-0f9e8d7c6b5a",
-  externalId: "client1:7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19",
+  externalId: "client:7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19",
   outcome: "no_answer",
   attempts: { call: 2, sms: 0 },
   phone: "+913694993501880",
@@ -363,16 +363,9 @@ export const hooks = new Elysia({ prefix: "/hook" })
       const leaked = getByReal(`+${digits}`) ?? getByReal(digits);
       if (leaked) {
         console.error(`[hidden-numbers] REAL NUMBER RECEIVED WHERE A TOKEN WAS EXPECTED (row ${leaked.id}) — tokenisation is bypassed upstream`);
-        set.status = 422;
-        return {
-          received: true,
-          matched: false,
-          error: "real_number_received",
-          reason: "this is a real phone number, not a token — the campaign is dialling untokenised numbers, fix it before results can be accepted",
-        };
       }
 
-      if (!looksLikeToken(digits)) {
+      if (leaked || !looksLikeToken(digits)) {
         set.status = 422;
         return {
           received: true,
@@ -430,7 +423,7 @@ export const hooks = new Elysia({ prefix: "/hook" })
         security: [{ coreKey: [] }],
         summary: "Receive a call result from Platform",
         description:
-          "Called by the Platform flow graph when a call reaches a terminal outcome. The cabinet matches the request by `externalId` (the call_id), maps `outcome` to your result vocabulary and queues delivery to your CRM. Always answers 200 for a well-formed body so Platform does not retry; a real phone number in `phone` is refused with 422.",
+          "Called by the Platform flow graph when a call reaches a terminal outcome. The cabinet matches the request by `externalId` (the call_id), maps `outcome` to your result vocabulary and queues delivery to your CRM. Always answers 200 for a well-formed body so Platform does not retry; anything in `phone` that is not a token of this cabinet is refused with 422 not_a_token.",
       },
     },
   );
