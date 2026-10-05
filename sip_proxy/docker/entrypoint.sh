@@ -105,6 +105,10 @@ CREATE TABLE IF NOT EXISTS htable_ipban (
 INSERT OR IGNORE INTO version (table_name, table_version) VALUES ('htable_ipban', 2);
 SQL
 
+if [ "$(sqlite3 "$DB_FILE" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='dialog'")" = "0" ]; then
+    { echo "BEGIN;"; cat /usr/share/kamailio/db_sqlite/dialog-create.sql; echo "COMMIT;"; } | sqlite3 -bail "$DB_FILE"
+fi
+
 BRANCHES="$(echo $ENABLED | tr ' ' ',')"
 echo "[entrypoint] Starting Kamailio on ${MY_PUBLIC_IP}:5060 branches: ${BRANCHES:-none}"
 
