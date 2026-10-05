@@ -231,6 +231,16 @@ describe("outbound leak guard", () => {
     expect(() => buildEvent(row({ real: same, token: same }), request, wr)).toThrow(/refusing to send a real phone number/);
   });
 
+  test("refuses when another mapped field carries the real number, in any formatting", () => {
+    const real = "+31612340002";
+    const token = encryptPhone(real);
+    const mapped = { ...wr, fields: [...DEFAULT_WR_FIELDS, { as: "first_name" as const, from: "first_name" as const }] };
+    expect(() => buildEvent(row({ real, token, first_name: "call 06 1234 0002 or 0031-612340002" }), request, mapped)).toThrow(
+      /refusing to send a real phone number/,
+    );
+    expect(() => buildEvent(row({ real, token, first_name: "Anna" }), request, mapped)).not.toThrow();
+  });
+
   test("a push that cannot build an event marks the request failed instead of silently dropping it", async () => {
     const phone = "+38093" + String(Date.now()).slice(-7);
     insertNumbers(uploadIdByLabel("leak-test"), [{ real: phone, token: phone }]);

@@ -65,13 +65,16 @@ export function buildEvent(r: NumberRow, req: RequestRow, wr: StoredWrConfig) {
 
   const player: Record<string, string> = { external_id: req.call_id };
   const data: Record<string, string> = {};
+  const realTail = r.real.replace(/\D/g, "").slice(-8);
 
   for (const field of wr.fields) {
     if ((field.as as string) === "external_id") continue;
     const value = sourceValue(r, req, field.from, wr);
     if (value == null || value === "") continue;
-    if ((TOKEN_ONLY_TARGETS as readonly string[]).includes(field.as) && value !== r.token) {
-      throw new Error(`refusing to send a non-token value in ${field.as} (row ${r.id})`);
+    if ((TOKEN_ONLY_TARGETS as readonly string[]).includes(field.as)) {
+      if (value !== r.token) throw new Error(`refusing to send a non-token value in ${field.as} (row ${r.id})`);
+    } else if (realTail && value.replace(/\D/g, "").includes(realTail)) {
+      throw new Error(`refusing to send a real phone number in ${field.as} (row ${r.id})`);
     }
     if (PLAYER_TARGETS.has(field.as)) player[field.as] = value;
     else data[field.as] = value;
