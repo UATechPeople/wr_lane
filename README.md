@@ -8,7 +8,7 @@ egress SIP leg, just before the call hits the PSTN provider.
   Cabinet (this service)            Platform
   ───────────────────────          ──────────
   load real base  ──encrypt──▶  token in phone_e164 (tagged player_segment)
-  SQLite (real, only here)          └─ segment → Voice AI call-only
+  SQLite (real, only here)          └─ segment → voice AI call-only
         ▲                                   │ to_number = token
         │                                   ▼
         └─ token ──/api/decrypt──▶ real #   (egress consumer — see "Egress (TBD)")
@@ -83,7 +83,7 @@ list format (guide §2A / §2):
 
 ```csv
 external_id,phone_e164,first_name,country,language,segment
-P-1,+447700900456,Ivan,UA,ru,vip
+P-1,+447700900456,Ivan,GB,en,vip
 ```
 
 ```bash
@@ -118,7 +118,7 @@ SPA, falling through to Elysia for the API. No Vite, no separate frontend packag
    (e.g. `hidden_base_2026_06`). That label is what turns the flat list into a **segment**
    (`deriveSegmentHierarchy` → `ensureSegmentHierarchy` builds Segment + membership + CampaignSegment).
    Without the label the rows enroll but no segment forms → the campaign has nothing to target.
-3. **Campaign** → an **Voice AI `call-only`** campaign whose enrollment rule matches the base and
+3. **Campaign** → a **voice AI `call-only`** campaign whose enrollment rule matches the base and
    whose SIP trunk terminates at the (future) egress proxy. Skip number-validation/`runcheck`;
    no SMS/WhatsApp (no decrypt hop there).
 4. **Compliance** → `/api/decrypt` is the natural place for client-side DNC (only point that sees the

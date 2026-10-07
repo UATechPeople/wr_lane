@@ -10,11 +10,9 @@
 node_modules
 dist
 
-.deploy
 config
 bin
 sip_proxy
-client-deploy
 Dockerfile
 .dockerignore
 

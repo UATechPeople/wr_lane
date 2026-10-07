@@ -42,7 +42,7 @@ digit + 14 ciphertext digits).
 ## What the dialed number looks like at the proxy
 
 Platform stores the **prefix-less** token as the lead's number and, at dial time, prepends a
-**per-client routing prefix** via the Voice AI trunk (`VoiceService.connection.techPrefix`).
+**per-client routing prefix** via the voice AI SIP trunk (`VoiceService.connection.techPrefix`).
 So the user-part that arrives at Kamailio is:
 
 ```
@@ -76,7 +76,7 @@ end
 ```
 
 Use **`http_async_client`** (non-blocking) and send `100 Trying` before the lookup, or
-Voice AI will retransmit the INVITE.
+The voice AI platform will retransmit the INVITE.
 
 ## Env (cabinet side)
 
