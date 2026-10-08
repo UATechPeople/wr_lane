@@ -26,11 +26,11 @@ const {
   duePushRequests,
 } = await import("./db");
 const { normalizeUserId, payloadUserId, validWebhookUrl, callIdFromExternalId } = await import("./hooks");
-const { getWrConfig, saveWrConfig } = await import("./webhook");
+const { getPlatformConfig, savePlatformConfig } = await import("./webhook");
 const { getSetting } = await import("./db");
 const { looksLikeToken, encryptPhone } = await import("./fpe");
 const { pushRequests, buildEvent, PUSH_MAX_ATTEMPTS } = await import("./platform");
-const { wrConfigSchema, DEFAULT_WR_FIELDS } = await import("./webhook");
+const { platformConfigSchema, DEFAULT_PLATFORM_FIELDS } = await import("./webhook");
 
 const FACTS = {
   phone: "+447700900123",
@@ -217,24 +217,24 @@ describe("token shape guard", () => {
 });
 
 describe("outbound leak guard", () => {
-  const wr = { baseUrl: "https://core.example", slug: "s", apiKey: "k", playerSegment: "seg", eventType: "player.registered", fields: DEFAULT_WR_FIELDS };
+  const platform = { baseUrl: "https://core.example", slug: "s", apiKey: "k", playerSegment: "seg", eventType: "player.registered", fields: DEFAULT_PLATFORM_FIELDS };
   const request = { call_id: "c-1", number_id: 1, segment: null, cohort: null } as never;
   const row = (over: Record<string, unknown>) =>
     ({ id: 1, real: "+447700900123", token: "+447700900123", segment: null, cohort: null, user_id: null, country: null, language: null, first_name: null, last_name: null, ...over }) as never;
 
   test("refuses to push a row whose token is really a phone number", () => {
-    expect(() => buildEvent(row({}), request, wr)).toThrow(/refusing to send a real phone number/);
+    expect(() => buildEvent(row({}), request, platform)).toThrow(/refusing to send a real phone number/);
   });
 
   test("refuses when the token equals the real number even if it looks token-shaped", () => {
     const same = encryptPhone("+447700900123");
-    expect(() => buildEvent(row({ real: same, token: same }), request, wr)).toThrow(/refusing to send a real phone number/);
+    expect(() => buildEvent(row({ real: same, token: same }), request, platform)).toThrow(/refusing to send a real phone number/);
   });
 
   test("refuses when another mapped field carries the real number, in any formatting", () => {
     const real = "+31612340002";
     const token = encryptPhone(real);
-    const mapped = { ...wr, fields: [...DEFAULT_WR_FIELDS, { as: "first_name" as const, from: "first_name" as const }] };
+    const mapped = { ...platform, fields: [...DEFAULT_PLATFORM_FIELDS, { as: "first_name" as const, from: "first_name" as const }] };
     expect(() => buildEvent(row({ real, token, first_name: "call 06 1234 0002 or 0031-612340002" }), request, mapped)).toThrow(
       /refusing to send a real phone number/,
     );
@@ -257,14 +257,14 @@ describe("outbound leak guard", () => {
 });
 
 describe("event identity", () => {
-  const wr = { baseUrl: "https://core.example", slug: "s", apiKey: "k", playerSegment: "seg", eventType: "player.registered", fields: DEFAULT_WR_FIELDS };
+  const platform = { baseUrl: "https://core.example", slug: "s", apiKey: "k", playerSegment: "seg", eventType: "player.registered", fields: DEFAULT_PLATFORM_FIELDS };
   const phone = "+447700900123";
   const token = encryptPhone(phone);
   const number = { id: 7, real: phone, token, segment: "hidden", cohort: null, user_id: "u1", country: null, language: null, first_name: null, last_name: null } as never;
   const request = (over: Record<string, unknown>) => ({ call_id: "11111111-2222-4333-8444-555555555555", number_id: 7, segment: null, cohort: null, ...over }) as never;
 
   test("external_id and event_id are the call id, phone_e164 is the token", () => {
-    const event = buildEvent(number, request({}), wr);
+    const event = buildEvent(number, request({}), platform);
     expect(event.player.external_id).toBe("11111111-2222-4333-8444-555555555555");
     expect(event.event_id).toBe("hn-11111111-2222-4333-8444-555555555555");
     expect(event.player.phone_e164).toBe(token);
@@ -272,22 +272,22 @@ describe("event identity", () => {
   });
 
   test("two requests for the same phone produce two distinct identities", () => {
-    const a = buildEvent(number, request({ call_id: "a-1" }), wr);
-    const b = buildEvent(number, request({ call_id: "b-2" }), wr);
+    const a = buildEvent(number, request({ call_id: "a-1" }), platform);
+    const b = buildEvent(number, request({ call_id: "b-2" }), platform);
     expect(a.player.external_id).not.toBe(b.player.external_id);
     expect(a.event_id).not.toBe(b.event_id);
     expect(a.player.phone_e164).toBe(b.player.phone_e164);
   });
 
   test("a legacy external_id mapping is ignored rather than overriding the call id", () => {
-    const legacy = { ...wr, fields: [{ as: "external_id", from: "token" }, ...DEFAULT_WR_FIELDS] } as never;
+    const legacy = { ...platform, fields: [{ as: "external_id", from: "token" }, ...DEFAULT_PLATFORM_FIELDS] } as never;
     expect(buildEvent(number, request({}), legacy).player.external_id).toBe("11111111-2222-4333-8444-555555555555");
   });
 
   test("segment and cohort come from the request first, then the number, then the defaults", () => {
-    expect(buildEvent(number, request({ segment: "nl", cohort: "welcome" }), wr).data).toEqual({ player_segment: "nl", cohort: "welcome" });
-    expect(buildEvent(number, request({}), wr).data).toEqual({ player_segment: "hidden" });
-    expect(buildEvent({ ...(number as object), segment: null } as never, request({}), { ...wr, cohort: "base" }).data).toEqual({
+    expect(buildEvent(number, request({ segment: "nl", cohort: "welcome" }), platform).data).toEqual({ player_segment: "nl", cohort: "welcome" });
+    expect(buildEvent(number, request({}), platform).data).toEqual({ player_segment: "hidden" });
+    expect(buildEvent({ ...(number as object), segment: null } as never, request({}), { ...platform, cohort: "base" }).data).toEqual({
       player_segment: "seg",
       cohort: "base",
     });
@@ -378,33 +378,33 @@ describe("platform mapping guard", () => {
   const base = { baseUrl: "https://core.example", slug: "s", apiKey: "k", playerSegment: "seg" };
 
   test("the real phone number is not even an allowed source", () => {
-    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "phone_e164", from: "phone" }] })).toThrow();
+    expect(() => platformConfigSchema.parse({ ...base, fields: [{ as: "phone_e164", from: "phone" }] })).toThrow();
   });
 
   test("phone_e164 refuses any source other than the token", () => {
-    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "phone_e164", from: "user_id" }] })).toThrow(
+    expect(() => platformConfigSchema.parse({ ...base, fields: [{ as: "phone_e164", from: "user_id" }] })).toThrow(
       /phone_e164 may only carry the token/,
     );
   });
 
   test("phone_e164 cannot be dropped from the mapping", () => {
-    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "cohort", from: "cohort" }] })).toThrow(/phone_e164 must be mapped/);
+    expect(() => platformConfigSchema.parse({ ...base, fields: [{ as: "cohort", from: "cohort" }] })).toThrow(/phone_e164 must be mapped/);
   });
 
   test("external_id is no longer mappable — it is always the call id", () => {
-    expect(() => wrConfigSchema.parse({ ...base, fields: [{ as: "external_id", from: "token" }, { as: "phone_e164", from: "token" }] })).toThrow();
+    expect(() => platformConfigSchema.parse({ ...base, fields: [{ as: "external_id", from: "token" }, { as: "phone_e164", from: "token" }] })).toThrow();
   });
 
   test("a correct mapping saves, and the shipped default is one", () => {
-    const parsed = wrConfigSchema.parse({ ...base, fields: DEFAULT_WR_FIELDS });
-    expect(parsed.fields).toEqual(DEFAULT_WR_FIELDS);
-    expect(DEFAULT_WR_FIELDS.find((f) => f.as === "phone_e164")!.from).toBe("token");
+    const parsed = platformConfigSchema.parse({ ...base, fields: DEFAULT_PLATFORM_FIELDS });
+    expect(parsed.fields).toEqual(DEFAULT_PLATFORM_FIELDS);
+    expect(DEFAULT_PLATFORM_FIELDS.find((f) => f.as === "phone_e164")!.from).toBe("token");
   });
 });
 
 describe("platform connection seeding", () => {
   test("the first read persists the env values so later env edits are ignored", () => {
-    const first = getWrConfig();
+    const first = getPlatformConfig();
     expect(getSetting("wr_connection")).not.toBeNull();
 
     const stored = JSON.parse(getSetting("wr_connection") as string) as { slug: string };
@@ -412,15 +412,15 @@ describe("platform connection seeding", () => {
   });
 
   test("what the operator saves wins over anything the env says", () => {
-    saveWrConfig({
+    savePlatformConfig({
       baseUrl: "https://operator.example",
       slug: "operator-slug",
       apiKey: "operator-key",
       playerSegment: "operator-segment",
       fields: [{ as: "phone_e164", from: "token" }],
     });
-    expect(getWrConfig().slug).toBe("operator-slug");
-    expect(getWrConfig().playerSegment).toBe("operator-segment");
+    expect(getPlatformConfig().slug).toBe("operator-slug");
+    expect(getPlatformConfig().playerSegment).toBe("operator-segment");
   });
 
   test("a config saved before call ids loses its external_id row on read", async () => {
@@ -438,7 +438,7 @@ describe("platform connection seeding", () => {
         ],
       }),
     );
-    expect(getWrConfig().fields).toEqual([{ as: "phone_e164", from: "token" }]);
+    expect(getPlatformConfig().fields).toEqual([{ as: "phone_e164", from: "token" }]);
   });
 });
 
@@ -525,16 +525,16 @@ describe("paced intake queue", async () => {
   setInboundKey(INBOUND);
 
   const connect = () =>
-    saveWrConfig({
+    savePlatformConfig({
       baseUrl: `http://127.0.0.1:${server.port}`,
       slug: "queue",
       apiKey: "queue-key",
       playerSegment: "seg",
-      fields: DEFAULT_WR_FIELDS,
+      fields: DEFAULT_PLATFORM_FIELDS,
     });
 
   const disconnect = () =>
-    db.setSetting("wr_connection", JSON.stringify({ baseUrl: "", slug: "", apiKey: "", playerSegment: "seg", fields: DEFAULT_WR_FIELDS }));
+    db.setSetting("wr_connection", JSON.stringify({ baseUrl: "", slug: "", apiKey: "", playerSegment: "seg", fields: DEFAULT_PLATFORM_FIELDS }));
 
   const drainAll = async () => {
     worker.setPushRate(worker.MAX_PUSH_RATE_PER_MIN);
@@ -572,7 +572,7 @@ describe("paced intake queue", async () => {
     expect(worker.getPushRate()).toBe(30);
   });
 
-  test("players are queued and answered without waiting for Platform", async () => {
+  test("players are queued and answered without waiting for the platform", async () => {
     connect();
     await drainAll();
     received.length = 0;
@@ -674,7 +674,7 @@ describe("paced intake queue", async () => {
     await drainAll();
   });
 
-  test("without a Platform connection nothing is attempted and no attempt is burned", async () => {
+  test("without a platform connection nothing is attempted and no attempt is burned", async () => {
     await drainAll();
     disconnect();
     const body = (await (await post([{ phone: phone() }])).json()) as Accepted;
@@ -684,7 +684,7 @@ describe("paced intake queue", async () => {
     const request = db.getRequest(body.rows[0].call_id!)!;
     expect(request.push_attempts).toBe(0);
     expect(request.push_tried_at).toBeNull();
-    expect(worker.pushQueueHealth().wr_configured).toBe(false);
+    expect(worker.pushQueueHealth().platform_configured).toBe(false);
     connect();
     await drainAll();
     expect(db.getRequest(body.rows[0].call_id!)!.pushed_at).not.toBeNull();

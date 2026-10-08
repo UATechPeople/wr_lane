@@ -28,7 +28,7 @@ import {
   type TrunkMode,
 } from "./telephony";
 import { buildInfo } from "./version";
-import { getCoreKey, getWrConfig, saveWrConfig, setCoreKey } from "./webhook";
+import { getCoreKey, getPlatformConfig, savePlatformConfig, setCoreKey } from "./webhook";
 
 const CORE_STATE_KEY = "core_installation";
 
@@ -45,16 +45,16 @@ function setCoreState(state: CoreInstallationState): void {
 
 export function pushBlockedReason(): string | null {
   const state = getCoreState();
-  if (state?.status === "pending") return "this installation is waiting for a takeover in Platform; nothing is sent until then";
+  if (state?.status === "pending") return "this installation is waiting for a takeover in the platform; nothing is sent until then";
   return null;
 }
 
 type CoreResponse<T> = { status: number; data: T };
 
 function coreBase(): { url: string; slug: string; apiKey: string } {
-  const wr = getWrConfig();
-  if (!wr.baseUrl || !wr.slug || !wr.apiKey) throw new Error("the Platform connection is not set");
-  return { url: wr.baseUrl.replace(/\/$/, ""), slug: wr.slug, apiKey: wr.apiKey };
+  const platform = getPlatformConfig();
+  if (!platform.baseUrl || !platform.slug || !platform.apiKey) throw new Error("the platform connection is not set");
+  return { url: platform.baseUrl.replace(/\/$/, ""), slug: platform.slug, apiKey: platform.apiKey };
 }
 
 async function coreRequest<T>(method: "GET" | "POST", path: string, body?: unknown, responseType: "json" | "text" = "json"): Promise<CoreResponse<T>> {
@@ -77,9 +77,9 @@ async function coreRequest<T>(method: "GET" | "POST", path: string, body?: unkno
 
 function describeFailure(status: number, data: unknown): string {
   const error = (data as { error?: { code?: string; message?: string } | string } | null)?.error;
-  if (typeof error === "string") return `Platform responded ${status}: ${error}`;
-  if (error?.message) return `Platform responded ${status}: ${error.message}`;
-  return `Platform responded ${status}`;
+  if (typeof error === "string") return `The platform responded ${status}: ${error}`;
+  if (error?.message) return `The platform responded ${status}: ${error.message}`;
+  return `The platform responded ${status}`;
 }
 
 export async function syncBundleConfig(): Promise<Record<string, unknown>> {
@@ -118,7 +118,7 @@ export async function applyManagedTelephony(raw: unknown): Promise<ManagedApply>
     try {
       inUse = new Map((await compareTelephonyWithCore()).trunks.map((t) => [t.name, t.voiceServicesWithAgent]));
     } catch (e) {
-      result.problems.push(`routes to remove are kept: Platform cannot be asked whether they are in use (${(e as Error).message})`);
+      result.problems.push(`routes to remove are kept: the platform cannot be asked whether they are in use (${(e as Error).message})`);
     }
     for (const item of plan.remove) {
       const name = trunkName(item.mode, item.id);
@@ -141,15 +141,15 @@ export async function applyManagedTelephony(raw: unknown): Promise<ManagedApply>
     }
   }
   if (result.added.length || result.prefixed.length || result.removed.length || result.keptInUse.length || result.problems.length) {
-    console.log(`[hidden-numbers] telephony from Platform: ${JSON.stringify(result)}`);
+    console.log(`[hidden-numbers] telephony from the platform: ${JSON.stringify(result)}`);
   }
   return result;
 }
 
 export function startManagedConfigCron(pattern = "0 */2 * * * *"): Cron {
   return new Cron(pattern, { protect: true, name: "bundle-config" }, async () => {
-    const wr = getWrConfig();
-    if (!wr.baseUrl || !wr.slug || !wr.apiKey || getCoreState()?.status !== "active") return;
+    const platform = getPlatformConfig();
+    if (!platform.baseUrl || !platform.slug || !platform.apiKey || getCoreState()?.status !== "active") return;
     try {
       await syncBundleConfig();
     } catch (e) {
@@ -203,8 +203,8 @@ export async function registerWithCore(options: { takeover?: boolean } = {}): Pr
 export type ConnectInput = { coreUrl: string; slug: string; apiKey: string; publicIp: string; domain?: string | null };
 
 export async function connectToCore(input: ConnectInput): Promise<{ config: Record<string, unknown>; register: RegisterResult }> {
-  const current = getWrConfig();
-  saveWrConfig({
+  const current = getPlatformConfig();
+  savePlatformConfig({
     ...current,
     baseUrl: input.coreUrl,
     slug: input.slug,
@@ -280,7 +280,7 @@ export type TrunkKeyChange = { mode: TrunkMode; route: string; key: string; sync
 
 function syncError(sync: { httpStatus: number; body: Record<string, unknown> }): string {
   const message = (sync.body as { error?: { message?: string } }).error?.message;
-  return message ?? `Platform has not taken the change yet (HTTP ${sync.httpStatus})`;
+  return message ?? `The platform has not taken the change yet (HTTP ${sync.httpStatus})`;
 }
 
 export async function changeTrunkKeyAndSync(mode: TrunkMode, key?: string, route = DEFAULT_ROUTE): Promise<TrunkKeyChange> {
@@ -320,11 +320,11 @@ export async function removeRouteAndSync(mode: TrunkMode, route: string): Promis
   try {
     compare = await compareTelephonyWithCore();
   } catch (e) {
-    throw new Error(`cannot check with Platform whether ${name} is still in use: ${(e as Error).message}`);
+    throw new Error(`cannot check with the platform whether ${name} is still in use: ${(e as Error).message}`);
   }
   const row = compare.trunks.find((t) => t.name === name);
   if (row && row.voiceServicesWithAgent > 0) {
-    throw new Error(`${name} is still used by ${row.voiceServicesWithAgent} voice service(s) with an agent in Platform; move them to another route first`);
+    throw new Error(`${name} is still used by ${row.voiceServicesWithAgent} voice service(s) with an agent in the platform; move them to another route first`);
   }
   if (!removeRoute(mode, route)) throw new Error(`${mode} has no route "${route}"`);
   try {

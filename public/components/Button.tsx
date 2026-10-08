@@ -1,7 +1,6 @@
 import type { ButtonHTMLAttributes } from "react";
 import { cn } from "../lib/cn";
 
-// Mirrors ui Button: primary is near-black (neutral-950), brand indigo is accent only.
 export type ButtonMode = "primary" | "secondary" | "tertiary" | "remove" | "function";
 
 const base =

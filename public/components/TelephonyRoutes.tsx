@@ -41,11 +41,11 @@ export function TelephonyRoutes({
         Telephony routes
       </h3>
       <p className="text-xs text-neutral-500">
-        Every route to a carrier gets its own number in Platform; a campaign
+        Every route to a carrier gets its own number in the platform; a campaign
         picks the route by the voice service it calls through. The prefix is
         dialled in front of the number and takes effect on the next call. The
         key is what the calling platform sends in <code>X-API-Key</code>; a new
-        key reaches Platform at once and the previous one keeps working until
+        key reaches the platform at once and the previous one keeps working until
         it does.
       </p>
       <p className="text-xs text-neutral-600">
@@ -55,7 +55,7 @@ export function TelephonyRoutes({
             ? allowedSources.join(", ")
             : "any address"}
         </span>
-        <span className="text-neutral-400"> · set in Platform</span>
+        <span className="text-neutral-400"> · set in the platform</span>
       </p>
       {trunks.map((trunk) => {
         const draft = drafts[trunk.mode] ?? { route: "", prefix: "" };
@@ -72,7 +72,7 @@ export function TelephonyRoutes({
                 </span>
               </div>
               {trunk.managed && (
-                <StatusBadge label="routes set in Platform" tone="info" />
+                <StatusBadge label="routes set on Platform" tone="info" />
               )}
             </div>
             {trunk.routes.map((route) => {

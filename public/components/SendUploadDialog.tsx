@@ -44,7 +44,7 @@ export function SendUploadDialog({
     <Modal
       open={!!upload}
       onClose={onClose}
-      title={`Send “${upload.label}” to Platform`}
+      title={`Send “${upload.label}” to the platform`}
       description={`${upload.count} numbers become calls. They leave in the background at the send rate set in Settings.`}
       footer={
         <>

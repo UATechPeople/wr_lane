@@ -57,7 +57,7 @@ describe("internal listener", () => {
     expect((await lookup("the_next_trunk_key_0123456789", "wrong")).status).toBe(401);
   });
 
-  test("trunk-key refuses a source outside the allow list set in Platform, even with a valid key", async () => {
+  test("trunk-key refuses a source outside the allow list set on the platform, even with a valid key", async () => {
     setCarrier("ipauth", { host: "198.51.100.77" }, "wr_0000test0000key0000test0000key");
     const ask = (ip: string) =>
       internalFetch(

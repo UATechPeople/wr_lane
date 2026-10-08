@@ -112,14 +112,14 @@ export function BaseTable({
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex items-center justify-end gap-0.5">
                   {r.external_id && (
-                    <Action label="transcript" title="Show the conversation from Platform" onClick={() => onTranscript(r)}>
+                    <Action label="transcript" title="Show the conversation from the platform" onClick={() => onTranscript(r)}>
                       <DocumentTextIcon className="h-4 w-4" />
                     </Action>
                   )}
                   <Action label="resend to CRM" title={`Post the call result to your CRM again${r.delivery_error ? ` — last error: ${r.delivery_error}` : ""}`} onClick={() => onResend(r)} tone="brand">
                     <PaperAirplaneIcon className="h-4 w-4" />
                   </Action>
-                  <Action label="push to Platform" title="Send the requests for this number to Platform again" onClick={() => onPushAgain(r)} tone="brand">
+                  <Action label="push to Platform" title="Send the requests for this number to the platform again" onClick={() => onPushAgain(r)} tone="brand">
                     <CloudArrowUpIcon className="h-4 w-4" />
                   </Action>
                   <Action label="edit" title="Edit this number" onClick={() => onEdit(r)}>

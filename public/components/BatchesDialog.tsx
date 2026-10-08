@@ -29,9 +29,9 @@ function QueueLine({ queue }: { queue: QueueHealth | null }) {
   if (!queue) return null;
   return (
     <div className="flex flex-col gap-2">
-      {!queue.wr_configured && (
+      {!queue.platform_configured && (
         <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
-          Nothing is sent until the Platform connection is set in Settings. Queued calls wait without losing attempts.
+          Nothing is sent until the platform connection is set in Settings. Queued calls wait without losing attempts.
         </p>
       )}
       {queue.blocked && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Sending is paused: {queue.blocked}</p>}
@@ -110,7 +110,7 @@ export function BatchesDialog({ open, onClose }: { open: boolean; onClose: () =>
       open={open}
       onClose={onClose}
       title="Batches"
-      description="Every request to /hook/players and every sent upload is a batch. Calls leave for Platform in the background."
+      description="Every request to /hook/players and every sent upload is a batch. Calls leave for the platform in the background."
       size="lg"
       footer={
         <Button mode="function" onClick={onClose}>

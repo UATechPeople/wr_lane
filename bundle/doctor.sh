@@ -39,7 +39,7 @@ section "Kamailio"
 start_line="$(compose logs --no-log-prefix kamailio 2>/dev/null | grep 'Starting Kamailio' | tail -1)"
 if [ -n "$start_line" ]; then
   ok "${start_line#*Starting Kamailio }"
-  case "$start_line" in *"branches: none"*) bad "kamailio accepts no mode; calls from Platform are refused" ;; esac
+  case "$start_line" in *"branches: none"*) bad "kamailio accepts no mode; calls from the platform are refused" ;; esac
 else
   bad "kamailio never started; see: docker compose logs kamailio"
 fi
@@ -67,11 +67,11 @@ if [ -n "${CABINET_DOMAIN:-}" ]; then
   if curl -fsS -m 10 -o /dev/null "https://$CABINET_DOMAIN/health" 2>/dev/null; then
     ok "https://$CABINET_DOMAIN answers"
   else
-    bad "https://$CABINET_DOMAIN does not answer; Platform cannot deliver call results (see: journalctl -u caddy)"
+    bad "https://$CABINET_DOMAIN does not answer; the platform cannot deliver call results (see: journalctl -u caddy)"
   fi
 fi
 
-section "Cabinet and Platform"
+section "Cabinet and platform"
 report="$(compose exec -T cabinet bun src/cli.ts doctor 2>&1)"
 rc=$?
 while IFS=$'\t' read -r level text; do

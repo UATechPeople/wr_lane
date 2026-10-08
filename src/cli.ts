@@ -35,7 +35,7 @@ import {
   type TrunkMode,
 } from "./telephony";
 import { buildInfo } from "./version";
-import { getWrConfig } from "./webhook";
+import { getPlatformConfig } from "./webhook";
 
 export class CliError extends Error {}
 
@@ -81,7 +81,7 @@ async function parseJson(text: string): Promise<Record<string, unknown>> {
 }
 
 function status() {
-  const wr = getWrConfig();
+  const platform = getPlatformConfig();
   const queue = pushQueueStats(12);
   let fingerprint: string | null = null;
   let installationId: string | null = null;
@@ -98,7 +98,7 @@ function status() {
     publicIp: getPublicIp(),
     domain: getDomain(),
     clientPrefix: keys.clientPrefix(),
-    core: { url: wr.baseUrl || null, slug: wr.slug || null, connected: Boolean(wr.baseUrl && wr.slug && wr.apiKey), state: getCoreState() },
+    core: { url: platform.baseUrl || null, slug: platform.slug || null, connected: Boolean(platform.baseUrl && platform.slug && platform.apiKey), state: getCoreState() },
     modes: modesSummary(),
     numbers: countNumbers(),
     queue,
@@ -140,7 +140,7 @@ export async function doctor(): Promise<Check[]> {
   add(st.publicIp ? "ok" : "fail", st.publicIp ? `public ip ${st.publicIp}` : "public ip is not set");
   if (st.clientPrefix) add("ok", `legacy client prefix ${st.clientPrefix} is stripped from dialled numbers`);
   if (!st.core.connected) {
-    add("fail", "not connected to Platform");
+    add("fail", "not connected to the platform");
     return checks;
   }
   const state = st.core.state?.status;
@@ -149,8 +149,8 @@ export async function doctor(): Promise<Check[]> {
   else add("warn", `connected to ${st.core.url}, but this installation never registered`);
 
   const queue = st.queue;
-  if (queue.abandoned > 0) add("warn", `${queue.abandoned} call(s) gave up reaching Platform; retry them in Batches`);
-  add(queue.pending > 0 ? "warn" : "ok", queue.pending > 0 ? `${queue.pending} call(s) waiting to be sent to Platform` : "nothing waits to be sent to Platform");
+  if (queue.abandoned > 0) add("warn", `${queue.abandoned} call(s) gave up reaching the platform; retry them in Batches`);
+  add(queue.pending > 0 ? "warn" : "ok", queue.pending > 0 ? `${queue.pending} call(s) waiting to be sent to the platform` : "nothing waits to be sent to the platform");
 
   const modes = modesSummary();
   if (modes.length === 0) add("fail", "no telephony mode is enabled; no call can leave this server");
@@ -158,16 +158,16 @@ export async function doctor(): Promise<Check[]> {
   let comparison: Awaited<ReturnType<typeof compareTelephonyWithCore>> | null = null;
   try {
     comparison = await compareTelephonyWithCore();
-    add("ok", "Platform answers with this cabinet key");
+    add("ok", "The platform answers with this cabinet key");
   } catch (e) {
-    add("fail", `Platform cannot be asked about telephony: ${(e as Error).message}`);
+    add("fail", `The platform cannot be asked about telephony: ${(e as Error).message}`);
   }
   if (comparison) {
     const inst = comparison.installation as { installationId?: string | null; publicIp?: string | null };
     if (inst.installationId && inst.installationId !== comparison.thisInstallation) {
-      add(state === "pending" ? "warn" : "fail", `Platform sends calls to another installation (${inst.publicIp ?? "unknown ip"})`);
+      add(state === "pending" ? "warn" : "fail", `The platform sends calls to another installation (${inst.publicIp ?? "unknown ip"})`);
     } else if (inst.installationId && inst.publicIp !== st.publicIp) {
-      add("fail", `Platform sends call results to ${inst.publicIp}, not to this server`);
+      add("fail", `The platform sends call results to ${inst.publicIp}, not to this server`);
     }
   }
 
@@ -182,21 +182,21 @@ export async function doctor(): Promise<Check[]> {
       const name = route.id === DEFAULT_ROUTE ? m.mode : `${m.mode}.${route.id}`;
       const trunk = comparison?.trunks.find((t) => t.name === name);
       const label = route.prefix ? `${name} (prefix ${route.prefix})` : name;
-      if (comparison && !trunk?.core) add(beforeTakeover ? "warn" : "fail", `${label}: Platform has no number for this route${beforeTakeover ? " yet; it is created at the takeover" : "; run update.sh --trunks"}`);
+      if (comparison && !trunk?.core) add(beforeTakeover ? "warn" : "fail", `${label}: the platform has no number for this route${beforeTakeover ? " yet; it is created at the takeover" : "; run update.sh --trunks"}`);
       else if (trunk && trunk.keysMatch === false && !trunk.prevKeyMatches) {
-        add(beforeTakeover ? "warn" : "fail", `${label}: the key Platform sends differs from the one this server accepts${beforeTakeover ? "; it is switched at the takeover" : ""}`);
+        add(beforeTakeover ? "warn" : "fail", `${label}: the key the platform sends differs from the one this server accepts${beforeTakeover ? "; it is switched at the takeover" : ""}`);
       }
-      else if (trunk && trunk.keysMatch === false && trunk.prevKeyMatches) add("warn", `${label}: key change in progress; Platform still sends the previous key`);
-      else if (trunk) add("ok", `${label}: the trunk key matches Platform`);
-      if (trunk && trunk.voiceServicesWithAgent === 0) add("ok", `${label}: the number is ready; its voice service in Platform waits for an agent`);
+      else if (trunk && trunk.keysMatch === false && trunk.prevKeyMatches) add("warn", `${label}: key change in progress; the platform still sends the previous key`);
+      else if (trunk) add("ok", `${label}: the trunk key matches the platform`);
+      if (trunk && trunk.voiceServicesWithAgent === 0) add("ok", `${label}: the number is ready; its voice service in the platform waits for an agent`);
     }
   }
   for (const t of comparison?.trunks ?? []) {
-    if (t.core && !t.local) add("warn", `${t.name}: Platform still has a number for a route this server does not accept`);
+    if (t.core && !t.local) add("warn", `${t.name}: the platform still has a number for a route this server does not accept`);
   }
 
   const allowed = getManagedTelephony().allowedSources ?? [];
-  add("ok", allowed.length > 0 ? `SIP is accepted only from ${allowed.join(", ")} (set in Platform)` : "SIP is accepted from any address (no allow list in Platform)");
+  add("ok", allowed.length > 0 ? `SIP is accepted only from ${allowed.join(", ")} (set in the platform)` : "SIP is accepted from any address (no allow list in the platform)");
 
   const rtp = await rtpenginePing("172.28.0.1:22222", 1500).catch(() => ({ ok: false }));
   add(rtp.ok ? "ok" : "fail", rtp.ok ? "rtpengine answers on 172.28.0.1:22222" : "rtpengine does not answer on 172.28.0.1:22222; calls would connect without sound");
@@ -343,7 +343,7 @@ export async function run(argv: string[], stdin: () => Promise<string> = readStd
       if (!(output as { ok: boolean }).ok) exitCode = 1;
       break;
     case "wr-key":
-      output = getWrConfig().apiKey;
+      output = getPlatformConfig().apiKey;
       break;
     case "doctor": {
       const report = await doctor();

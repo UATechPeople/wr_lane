@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, invertMap, type Batch, type CrmConfig, type Preview, type RequestRow, type Row, type EncryptionInput, type Settings, type TrunkChange, type UploadResult, type Transcript, type Upload, type WrConfig } from "./api";
+import { api, invertMap, type Batch, type CrmConfig, type Preview, type RequestRow, type Row, type EncryptionInput, type Settings, type TrunkChange, type UploadResult, type Transcript, type Upload, type PlatformConfig } from "./api";
 import type { ToastData, ToastTone } from "../components/Toast";
 
 const PAGE_SIZE = 25;
@@ -176,7 +176,7 @@ export function useCabinet() {
   function askDeleteContact(row: Row) {
     setConfirm({
       title: "Delete contact",
-      description: `${row.real} and its token are removed from this cabinet. Tokens already pushed stay in Platform.`,
+      description: `${row.real} and its token are removed from this cabinet. Tokens already pushed stay in the platform.`,
       confirmLabel: "Delete",
       run: async () => {
         await api.remove(row.id);
@@ -252,9 +252,9 @@ export function useCabinet() {
     setSettingsOpen(false);
   }
 
-  async function saveWr(wr: WrConfig) {
+  async function savePlatform(platform: PlatformConfig) {
     setBusy(true);
-    const res = await api.saveWr(wr);
+    const res = await api.savePlatform(platform);
     setBusy(false);
     if (res.error) {
       notify(res.error, "error");
@@ -275,7 +275,7 @@ export function useCabinet() {
 
   function uploadSent(batch: Batch) {
     setSendingUpload(null);
-    notify(`${batch.total} calls queued for Platform`);
+    notify(`${batch.total} calls queued for the platform`);
     setBatchesOpen(true);
   }
 
@@ -293,7 +293,7 @@ export function useCabinet() {
     setSettings(await api.settings());
     setBusy(false);
     if (res.error && res.reregistered === undefined) notify(res.error, "error");
-    else if (res.error) notify(`Encryption keys saved; Platform refused the new ones: ${res.error}`, "error");
+    else if (res.error) notify(`Encryption keys saved; the platform refused the new ones: ${res.error}`, "error");
     else notify("Encryption keys saved");
   }
 
@@ -331,19 +331,19 @@ export function useCabinet() {
     onChangeKey: (mode: string, route: string, key?: string) =>
       trunkAction(
         () => api.changeTrunkKey(mode, route, key),
-        `${trunkName(mode, route)} key changed; Platform uses it now`,
-        `${trunkName(mode, route)} key changed here, Platform not updated yet; both keys work until it is, press Change key again to retry`,
+        `${trunkName(mode, route)} key changed; the platform uses it now`,
+        `${trunkName(mode, route)} key changed here, the platform is not updated yet; both keys work until it is, press Change key again to retry`,
       ),
     onAddRoute: (mode: string, route: string, prefix: string) =>
       trunkAction(
         () => api.addRoute(mode, route, prefix),
-        `route ${trunkName(mode, route.toLowerCase())} added; Platform created its number and voice service`,
-        `route added here, Platform has not created its number yet; run update.sh --trunks or add the route again later`,
+        `route ${trunkName(mode, route.toLowerCase())} added; the platform created its number and voice service`,
+        `route added here, the platform has not created its number yet; run update.sh --trunks or add the route again later`,
       ),
     onSetPrefix: (mode: string, route: string, prefix: string) =>
       trunkAction(() => api.setRoutePrefix(mode, route, prefix), `${trunkName(mode, route)} now dials ${prefix || "without a prefix"}`, "prefix not saved"),
     onRemoveRoute: (mode: string, route: string) =>
-      trunkAction(() => api.removeRoute(mode, route), `route ${trunkName(mode, route)} removed`, "route removed here, Platform has not dropped its number yet"),
+      trunkAction(() => api.removeRoute(mode, route), `route ${trunkName(mode, route)} removed`, "route removed here, the platform has not dropped its number yet"),
   };
 
   async function pushAgain(row: Row) {
@@ -355,7 +355,7 @@ export function useCabinet() {
       return;
     }
     await refresh();
-    notify(res.failed ? `Sent ${res.sent}, failed ${res.failed}: ${res.error}` : `Sent to Platform`, res.failed ? "info" : "success");
+    notify(res.failed ? `Sent ${res.sent}, failed ${res.failed}: ${res.error}` : `Sent to the platform`, res.failed ? "info" : "success");
   }
 
   async function resend(row: Row) {
@@ -380,7 +380,7 @@ export function useCabinet() {
     askDeleteContact, askDeleteUpload, closeConfirm: () => setConfirm(null), runConfirm,
     dismissToast: () => setToast(null),
     settings, settingsOpen, openSettings, docsOpen, openDocs, closeDocs: () => setDocsOpen(false), closeSettings: () => setSettingsOpen(false),
-    saveCrm, saveWr, savePushRate, rotateKey, routeActions, changeEncryption, changeLogin, changeDecryptKey,
+    saveCrm, savePlatform, savePushRate, rotateKey, routeActions, changeEncryption, changeLogin, changeDecryptKey,
     sendingUpload, openSendUpload: setSendingUpload, closeSendUpload: () => setSendingUpload(null), uploadSent,
     batchesOpen, openBatches: () => setBatchesOpen(true), closeBatches: () => setBatchesOpen(false), testCrm: api.testCrm, resend, pushAgain,
     transcriptRow, transcript, transcriptBusy, openTranscript, closeTranscript: () => setTranscriptRow(null),
