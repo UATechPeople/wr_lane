@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { countNumbers, deleteUpload, getByToken, getRequest, getUpload, listBatches, listNumbers, requestsForNumber, rowsForUpload } from "./db";
 import { pushRequest, PUSH_MAX_ATTEMPTS } from "./platform";
-import { saveWrConfig, DEFAULT_WR_FIELDS } from "./webhook";
+import { savePlatformConfig, DEFAULT_PLATFORM_FIELDS } from "./webhook";
 import { encryptPhone } from "./fpe";
 import { ingestRecords, sendUpload } from "./uploads";
 
@@ -84,7 +84,7 @@ describe("uploads", () => {
   });
 
   test("a queued call whose number was deleted gives up at once instead of blocking the queue", async () => {
-    saveWrConfig({ baseUrl: "http://127.0.0.1:9", slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    savePlatformConfig({ baseUrl: "http://127.0.0.1:9", slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_PLATFORM_FIELDS });
     const file = ingestRecords([{ phone: "+31600007501" }], "gone.csv");
     const sent = sendUpload(file.uploadId);
     if (!("batchId" in sent)) throw new Error("not sent");

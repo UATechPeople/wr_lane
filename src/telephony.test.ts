@@ -99,7 +99,7 @@ describe("telephony", () => {
     expect(finishRotation("direct")).toBe(false);
   });
 
-  test("a disabled mode disappears from the SIP config and from what Platform gets", () => {
+  test("a disabled mode disappears from the SIP config and from what the platform gets", () => {
     setCarrier("direct", { host: "10.1.1.1" });
     expect(disableMode("direct")).toBe(true);
     expect(kamailioConfig().modes).toEqual({});
@@ -199,7 +199,7 @@ describe("telephony", () => {
     expect(getTelephony().modes.ipauth?.routes.every((r) => !r.prevKey)).toBe(true);
   });
 
-  test("routes and allowed sources set in Platform are parsed strictly", () => {
+  test("routes and allowed sources set on the platform are parsed strictly", () => {
     const parsed = parseManagedTelephony({
       routes: { ipauth: [{ id: "TDM", prefix: "04242" }, { id: "bad id", prefix: "1" }, { id: "x", prefix: "12a" }], sip: [{ id: "y", prefix: "" }] },
       allowedSources: ["192.0.2.0/24", "10.0.0.1", "nonsense", "300.1.1.1/8"],

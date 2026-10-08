@@ -41,7 +41,7 @@ digit + 14 ciphertext digits).
 
 ## What the dialed number looks like at the proxy
 
-Platform stores the **prefix-less** token as the lead's number and, at dial time, prepends a
+The platform stores the **prefix-less** token as the lead's number and, at dial time, prepends a
 **per-client routing prefix** via the voice AI SIP trunk (`VoiceService.connection.techPrefix`).
 So the user-part that arrives at Kamailio is:
 
@@ -88,6 +88,6 @@ CLIENT_PREFIX=123000      # this client's prefix; /detokenize strips it, /health
 ```
 
 Each client runs their own cabinet, so `CLIENT_PREFIX` is that client's single source of truth
-(visible at `GET /health`). It must match Kamailio's routing prefix and Platform' per-client
+(visible at `GET /health`). It must match Kamailio's routing prefix and the platform's per-client
 `VoiceService.techPrefix`. If you'd rather strip the prefix in Kamailio, leave `CLIENT_PREFIX`
 unset and pass the bare token — both work.

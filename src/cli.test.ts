@@ -3,7 +3,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { deleteSetting } from "./db";
 import { keys } from "./keys";
 import { parseEnvLines, rtpenginePing, run } from "./cli";
-import { saveWrConfig, DEFAULT_WR_FIELDS } from "./webhook";
+import { savePlatformConfig, DEFAULT_PLATFORM_FIELDS } from "./webhook";
 import { drainPushQueue } from "./platform";
 
 const received: Array<{ method: string; path: string; body: any }> = [];
@@ -28,7 +28,7 @@ const core = Bun.serve({
     }
     if (url.pathname.endsWith("/bundle/register")) return Response.json(registerReply.body, { status: registerReply.status });
     if (url.pathname.endsWith("/bundle/trunks")) {
-      if (trunksReplyStatus !== 200) return Response.json({ error: { message: "Telephony is not configured in Platform yet" } }, { status: trunksReplyStatus });
+      if (trunksReplyStatus !== 200) return Response.json({ error: { message: "Telephony is not configured on the platform yet" } }, { status: trunksReplyStatus });
       syncedKeys = { ...(body?.trunks ?? {}) };
       return Response.json({ ok: true, trunks: Object.fromEntries(Object.keys(syncedKeys).map((name) => [name, { status: "created" }])) });
     }
@@ -90,7 +90,7 @@ describe("cli", () => {
     expect((await run(["bundle-env"])).output).toContain("HN_REGISTRY_TOKEN=ghp_x");
   });
 
-  test("the cabinet domain goes to Platform with every registration until it is cleared", async () => {
+  test("the cabinet domain goes to the platform with every registration until it is cleared", async () => {
     const body = JSON.stringify({ coreUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "wr_live_cabinet_key_0123456789", publicIp: "203.0.113.233", domain: "Cabinet.Example.com" });
     expect((await run(["connect"], async () => body)).exitCode).toBe(0);
     expect((await run(["status", "--get", "domain"])).output).toBe("cabinet.example.com");
@@ -102,15 +102,15 @@ describe("cli", () => {
     await expect(run(["domain", "10.0.0.1"])).rejects.toThrow(/hostname/);
   });
 
-  test("changing a trunk key finishes once Platform has it, and keeps both keys while it does not", async () => {
+  test("changing a trunk key finishes once the platform has it, and keeps both keys while it does not", async () => {
     const { changeTrunkKeyAndSync } = await import("./core");
     const { getTelephony, setCarrier, trunkKeyMode } = await import("./telephony");
-    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    savePlatformConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_PLATFORM_FIELDS });
     setCarrier("ipauth", { host: "198.51.100.77" }, "wr_0000test0000key0000test0000key");
 
     trunksReplyStatus = 503;
     const stuck = await changeTrunkKeyAndSync("ipauth", "first_new_trunk_key_0123456789");
-    expect(stuck).toMatchObject({ synced: false, error: "Telephony is not configured in Platform yet" });
+    expect(stuck).toMatchObject({ synced: false, error: "Telephony is not configured on the platform yet" });
     expect(trunkKeyMode("wr_0000test0000key0000test0000key")).toBe("ipauth");
     expect(trunkKeyMode("first_new_trunk_key_0123456789")).toBe("ipauth");
 
@@ -124,10 +124,10 @@ describe("cli", () => {
     expect(syncedKeys.ipauth).toBe(done.key);
   });
 
-  test("a route gets its own number in Platform and cannot be removed while an agent calls through it", async () => {
+  test("a route gets its own number on the platform and cannot be removed while an agent calls through it", async () => {
     const { addRouteAndSync, removeRouteAndSync } = await import("./core");
     const { setCarrier, trunkKeyLookup } = await import("./telephony");
-    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    savePlatformConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_PLATFORM_FIELDS });
     setCarrier("ipauth", { host: "198.51.100.77" }, "wr_0000test0000key0000test0000key");
 
     expect(await addRouteAndSync("ipauth", "tdm", "04242")).toEqual({ mode: "ipauth", route: "tdm", synced: true });
@@ -143,10 +143,10 @@ describe("cli", () => {
     expect(Object.keys(syncedKeys)).toEqual(["ipauth"]);
   });
 
-  test("routes set in the Platform client card appear here on the next config sync, and leave only when free", async () => {
+  test("routes set in the platform client card appear here on the next config sync, and leave only when free", async () => {
     const { syncBundleConfig } = await import("./core");
     const { setCarrier, trunkKeyLookup, getTelephony, isSourceAllowed, saveManagedTelephony } = await import("./telephony");
-    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    savePlatformConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_PLATFORM_FIELDS });
     setCarrier("ipauth", { host: "198.51.100.77" }, "wr_0000test0000key0000test0000key");
 
     managedTelephony = { routes: { ipauth: [{ id: "tdm", prefix: "04242" }] }, allowedSources: ["192.0.2.0/24"] };
@@ -172,10 +172,10 @@ describe("cli", () => {
     saveManagedTelephony({});
   });
 
-  test("a legacy client prefix imported from the old stack survives a Platform config without one", async () => {
+  test("a legacy client prefix imported from the old stack survives a platform config without one", async () => {
     const { syncBundleConfig } = await import("./core");
     const { setClientPrefix } = await import("./keys");
-    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    savePlatformConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_PLATFORM_FIELDS });
     setClientPrefix("123000");
     corePrefix = undefined;
     await syncBundleConfig();
@@ -186,7 +186,7 @@ describe("cli", () => {
   });
 
   test("a pending registration stops the push worker until a takeover", async () => {
-    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    savePlatformConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_PLATFORM_FIELDS });
     await run(["public-ip", "203.0.113.233"]);
     registerReply = { status: 202, body: { registered: false, status: "pending", reason: "other_installation" } };
     expect((await run(["register"])).output).toMatchObject({ status: "pending" });
@@ -198,7 +198,7 @@ describe("cli", () => {
   });
 
   test("carrier details never print keys or passwords, and trunks sync sends only keys of enabled modes", async () => {
-    saveWrConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_WR_FIELDS });
+    savePlatformConfig({ baseUrl: `http://127.0.0.1:${core.port}`, slug: "acme", apiKey: "k", playerSegment: "seg", fields: DEFAULT_PLATFORM_FIELDS });
     const input = async () => JSON.stringify({ host: "sip.example", user: "acme", pass: "s3cret!" });
     await run(["carrier", "set", "digest"], input);
     const shown = JSON.stringify((await run(["carrier", "get", "digest"])).output);

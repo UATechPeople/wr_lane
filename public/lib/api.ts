@@ -55,21 +55,21 @@ export type CrmConfig = {
   timeoutMs: number;
 };
 
-export type WrField = { as: string; from: string };
+export type PlatformField = { as: string; from: string };
 
-export type WrConfig = {
+export type PlatformConfig = {
   baseUrl: string;
   slug: string;
   apiKey: string;
   playerSegment: string;
   eventType: string;
   cohort?: string;
-  fields: WrField[];
+  fields: PlatformField[];
 };
 
 export type Settings = {
   crm: CrmConfig;
-  wr: WrConfig;
+  platform: PlatformConfig;
   inboundKey: string | null;
   coreKey: string | null;
   defaults: CrmConfig;
@@ -124,7 +124,7 @@ export type QueueHealth = {
   oldest_pending_age_seconds: number | null;
   rate_per_min: number;
   attempts_last_minute: number;
-  wr_configured: boolean;
+  platform_configured: boolean;
   blocked: string | null;
   worker_running: boolean;
   worker_last_run_at: string | null;
@@ -229,11 +229,11 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(crm),
     }).then(json),
-  saveWr: (wr: WrConfig): Promise<{ wr?: WrConfig; error?: string }> =>
-    fetch("/api/settings/wr", {
+  savePlatform: (platform: PlatformConfig): Promise<{ platform?: PlatformConfig; error?: string }> =>
+    fetch("/api/settings/platform", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(wr),
+      body: JSON.stringify(platform),
     }).then(json),
   rotateKey: (which: "inbound" | "core"): Promise<{ key: string }> =>
     fetch(`/api/settings/keys/${which}`, { method: "POST" }).then(json),

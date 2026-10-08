@@ -5,7 +5,7 @@ import { Button } from "./Button";
 import { Input } from "./Input";
 import { StatusBadge } from "./StatusBadge";
 import { TelephonyRoutes, type RouteActions } from "./TelephonyRoutes";
-import type { CrmConfig, EncryptionInput, Settings, TestResult, WrConfig } from "../lib/api";
+import type { CrmConfig, EncryptionInput, Settings, TestResult, PlatformConfig } from "../lib/api";
 
 type HeaderPair = { name: string; value: string };
 
@@ -25,7 +25,7 @@ export function SettingsDialog({
   busy,
   onClose,
   onSave,
-  onSaveWr,
+  onSavePlatform,
   onSavePushRate,
   onRotate,
   routeActions,
@@ -39,7 +39,7 @@ export function SettingsDialog({
   busy: boolean;
   onClose: () => void;
   onSave: (crm: CrmConfig) => void;
-  onSaveWr: (wr: WrConfig) => void;
+  onSavePlatform: (platform: PlatformConfig) => void;
   onSavePushRate: (rate: number) => void;
   onRotate: (which: "inbound" | "core") => void;
   routeActions: RouteActions;
@@ -49,7 +49,7 @@ export function SettingsDialog({
   onTest: () => Promise<TestResult>;
 }) {
   const [draft, setDraft] = useState<CrmConfig | null>(null);
-  const [wr, setWr] = useState<WrConfig | null>(null);
+  const [platform, setPlatform] = useState<PlatformConfig | null>(null);
   const [pairs, setPairs] = useState<HeaderPair[]>([]);
   const [test, setTest] = useState<TestResult | null>(null);
   const [rate, setRate] = useState("");
@@ -60,7 +60,7 @@ export function SettingsDialog({
   useEffect(() => {
     if (!settings) return;
     setDraft(settings.crm);
-    setWr(settings.wr);
+    setPlatform(settings.platform);
     setPairs(toPairs(settings.crm.headers));
     setRate(String(settings.pushRatePerMin));
     setFf3({ ff3Key: settings.keys.ff3Key, ff3Tweak: settings.keys.ff3Tweak, routeDigit: settings.keys.routeDigit });
@@ -69,17 +69,17 @@ export function SettingsDialog({
     setTest(null);
   }, [settings, open]);
 
-  if (!draft || !wr || !settings) return null;
+  if (!draft || !platform || !settings) return null;
 
   const patch = (next: Partial<CrmConfig>) => setDraft({ ...draft, ...next });
 
   const save = () => {
-    onSaveWr(wr);
+    onSavePlatform(platform);
     if (rate.trim() !== String(settings.pushRatePerMin)) onSavePushRate(Number(rate.trim()));
     onSave({ ...draft, headers: toHeaders(pairs) });
   };
 
-  const patchWr = (next: Partial<WrConfig>) => setWr({ ...wr, ...next });
+  const patchPlatform = (next: Partial<PlatformConfig>) => setPlatform({ ...platform, ...next });
 
   const runTest = async () => {
     setTest(null);
@@ -112,42 +112,42 @@ export function SettingsDialog({
           <h3 className="text-sm font-semibold text-neutral-900">Platform connection</h3>
           <Input
             label="Platform URL *"
-            value={wr.baseUrl}
+            value={platform.baseUrl}
             placeholder="https://core.example.com"
-            onChange={(e) => patchWr({ baseUrl: e.target.value })}
+            onChange={(e) => patchPlatform({ baseUrl: e.target.value })}
           />
           <div className="flex gap-2">
             <div className="flex-1">
-              <Input label="Client slug *" value={wr.slug} onChange={(e) => patchWr({ slug: e.target.value })} />
+              <Input label="Client slug *" value={platform.slug} onChange={(e) => patchPlatform({ slug: e.target.value })} />
             </div>
             <div className="flex-1">
               <Input
                 label="Segment *"
-                value={wr.playerSegment}
-                onChange={(e) => patchWr({ playerSegment: e.target.value })}
+                value={platform.playerSegment}
+                onChange={(e) => patchPlatform({ playerSegment: e.target.value })}
               />
             </div>
           </div>
           <Input
             label="API key *"
-            value={wr.apiKey}
-            hint="Issued by Platform together with the client slug"
-            onChange={(e) => patchWr({ apiKey: e.target.value })}
+            value={platform.apiKey}
+            hint="Issued by the platform together with the client slug"
+            onChange={(e) => patchPlatform({ apiKey: e.target.value })}
           />
           <div className="flex gap-2">
             <div className="flex-1">
               <Input
                 label="Event type *"
-                value={wr.eventType}
-                onChange={(e) => patchWr({ eventType: e.target.value })}
+                value={platform.eventType}
+                onChange={(e) => patchPlatform({ eventType: e.target.value })}
               />
             </div>
             <div className="flex-1">
               <Input
                 label="Default cohort"
-                value={wr.cohort ?? ""}
+                value={platform.cohort ?? ""}
                 hint="Optional — used only when a record has none"
-                onChange={(e) => patchWr({ cohort: e.target.value || undefined })}
+                onChange={(e) => patchPlatform({ cohort: e.target.value || undefined })}
               />
             </div>
           </div>
@@ -157,13 +157,13 @@ export function SettingsDialog({
             type="number"
             min={1}
             value={rate}
-            hint="How fast queued players leave for Platform. Small requests go first, big batches keep at least a fifth of the rate."
+            hint="How fast queued players leave for the platform. Small requests go first, big batches keep at least a fifth of the rate."
             onChange={(e) => setRate(e.target.value)}
           />
         </section>
 
         <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold text-neutral-900">What Platform receives</h3>
+          <h3 className="text-sm font-semibold text-neutral-900">What the platform receives</h3>
           <p className="text-xs text-neutral-500">
             Fixed shape. Only the token travels; the real number never does. <code>external_id</code> is the call_id of the request,{" "}
             <code>player_segment</code> and <code>cohort</code> come from the request and fall back to the values above.
@@ -171,7 +171,7 @@ export function SettingsDialog({
           <pre className="overflow-x-auto rounded-lg bg-neutral-900 p-3 text-xs text-neutral-100">
             {JSON.stringify(
               {
-                type: wr.eventType,
+                type: platform.eventType,
                 event_id: "hn-7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19",
                 player: { external_id: "7c1e2f40-9a3b-4d6e-8f21-0b5c4d3e2a19", phone_e164: "+913694993501880" },
                 data: { player_segment: "hidden", cohort: "c1" },

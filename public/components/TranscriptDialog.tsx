@@ -49,7 +49,7 @@ export function TranscriptDialog({
         )}
 
         {!busy && data && !data.error && data.calls.length === 0 && (
-          <p className="text-sm text-neutral-500">Platform has no calls recorded for this lead yet.</p>
+          <p className="text-sm text-neutral-500">The platform has no calls recorded for this lead yet.</p>
         )}
 
         {!busy &&

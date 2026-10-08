@@ -61,8 +61,8 @@ const PLAYER_EXAMPLE = {
 const playerSchema = t.Object(
   {
     phone: t.String({ description: "Real phone number in E.164. Never a token.", examples: ["+31612345678"] }),
-    segment: t.Optional(t.String({ description: "Together with cohort selects the Platform campaign.", examples: ["hidden"] })),
-    cohort: t.Optional(t.String({ description: "Together with segment selects the Platform campaign.", examples: ["c1"] })),
+    segment: t.Optional(t.String({ description: "Together with cohort selects the platform campaign.", examples: ["hidden"] })),
+    cohort: t.Optional(t.String({ description: "Together with segment selects the platform campaign.", examples: ["c1"] })),
     webhook_url: t.Optional(
       t.String({
         description: "Where the result of this call must be posted.",
@@ -86,7 +86,7 @@ const playersBody = t.Union([playerSchema, t.Array(playerSchema, { minItems: 1, 
 
 const acceptedRowSchema = t.Object({
   phone: t.String(),
-  token: t.Nullable(t.String({ description: "15-digit token Platform will dial." })),
+  token: t.Nullable(t.String({ description: "15-digit token the platform will dial." })),
   call_id: t.Nullable(t.String({ format: "uuid", description: "Identifier of this call. Comes back with the result." })),
   ok: t.Boolean(),
   error: t.Optional(t.String()),
@@ -105,14 +105,14 @@ const ACCEPTED_EXAMPLE = {
 const playersResponse = t.Object(
   {
     received: t.Number(),
-    accepted: t.Number({ description: "Rows that became calls and were queued for Platform." }),
+    accepted: t.Number({ description: "Rows that became calls and were queued for the platform." }),
     pushed: t.Nullable(
       t.Object(
         { sent: t.Number(), failed: t.Number(), error: t.Optional(t.String()) },
-        { description: "Always null: calls are sent to Platform in the background at the configured rate." },
+        { description: "Always null: calls are sent to the platform in the background at the configured rate." },
       ),
     ),
-    queued: t.Number({ description: "Calls queued for Platform by this request." }),
+    queued: t.Number({ description: "Calls queued for the platform by this request." }),
     batch_id: t.Nullable(t.Number({ description: "Batch of this request. Track it in the cabinet." })),
     rows: t.Array(acceptedRowSchema),
   },
@@ -143,7 +143,7 @@ const callResultBody = t.Object(
     phone: t.Optional(t.Nullable(t.String({ description: "The token that was dialled." }))),
     sentAt: t.Optional(t.String()),
   },
-  { additionalProperties: true, description: "Body posted by a Platform flow-graph webhook node.", examples: [CALL_RESULT_EXAMPLE] },
+  { additionalProperties: true, description: "Body posted by the platform flow-graph webhook node.", examples: [CALL_RESULT_EXAMPLE] },
 );
 
 const callResultResponse = t.Object(
@@ -162,7 +162,7 @@ const INBOUND_DETAIL = {
   tags: ["Players"],
   security: [{ inboundKey: [] }],
   description:
-    "Send a player to be called. The number is encrypted into a token here; only the token leaves your infrastructure. Every request is a separate call with its own call_id. The result comes back to `webhook_url` as `{ \"phone\": \"+31612345678\", \"call_id\": \"uuid\", \"result\": \"no_answer\", \"payload\": { \"a\": \"b\", \"user_id\": \"12345\" } }`. Calls are queued and sent to Platform in the background at the rate set in the cabinet. At most 5000 players per request. Send an `Idempotency-Key` header to make a retried request return the first response instead of creating new calls.",
+    "Send a player to be called. The number is encrypted into a token here; only the token leaves your infrastructure. Every request is a separate call with its own call_id. The result comes back to `webhook_url` as `{ \"phone\": \"+31612345678\", \"call_id\": \"uuid\", \"result\": \"no_answer\", \"payload\": { \"a\": \"b\", \"user_id\": \"12345\" } }`. Calls are queued and sent to the platform in the background at the rate set in the cabinet. At most 5000 players per request. Send an `Idempotency-Key` header to make a retried request return the first response instead of creating new calls.",
 };
 
 type PlayerInput = {
@@ -421,9 +421,9 @@ export const hooks = new Elysia({ prefix: "/hook" })
       detail: {
         tags: ["Platform"],
         security: [{ coreKey: [] }],
-        summary: "Receive a call result from Platform",
+        summary: "Receive a call result from the platform",
         description:
-          "Called by the Platform flow graph when a call reaches a terminal outcome. The cabinet matches the request by `externalId` (the call_id), maps `outcome` to your result vocabulary and queues delivery to your CRM. Always answers 200 for a well-formed body so Platform does not retry; anything in `phone` that is not a token of this cabinet is refused with 422 not_a_token.",
+          "Called by the platform flow graph when a call reaches a terminal outcome. The cabinet matches the request by `externalId` (the call_id), maps `outcome` to your result vocabulary and queues delivery to your CRM. Always answers 200 for a well-formed body so the platform does not retry; anything in `phone` that is not a token of this cabinet is refused with 422 not_a_token.",
       },
     },
   );

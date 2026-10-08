@@ -4,7 +4,6 @@
    doesn't auto-detect content the way the dev server does, so pin it. */
 @source "./**/*.{tsx,ts,html}";
 
-/* Platform UI design tokens (mirror of ui/tailwind.config.ts). */
 @theme {
   --color-brand-50: #eef2ff;
   --color-brand-100: #e0e7ff;

@@ -52,8 +52,8 @@ import {
   getCrmConfig,
   getInboundKey,
   saveCrmConfig,
-  getWrConfig,
-  saveWrConfig,
+  getPlatformConfig,
+  savePlatformConfig,
   setCoreKey,
   setInboundKey,
 } from "./webhook";
@@ -147,7 +147,7 @@ function trunkKeys() {
 }
 
 function refuseManaged(mode: TrunkMode): string | null {
-  return isManagedMode(mode) ? `the routes of ${mode} are set in Platform (client card); change them there` : null;
+  return isManagedMode(mode) ? `the routes of ${mode} are set in the platform (client card); change them there` : null;
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -315,7 +315,7 @@ const api = new Elysia({ prefix: "/api" })
       }
       if (upload.label === STREAM_LABEL) {
         set.status = 422;
-        return { error: "numbers from the CRM stream are sent to Platform as they arrive" };
+        return { error: "numbers from the CRM stream are sent to the platform as they arrive" };
       }
       const sent = sendUpload(upload.id, body?.force === true);
       if ("error" in sent) {
@@ -324,7 +324,7 @@ const api = new Elysia({ prefix: "/api" })
       }
       if ("conflict" in sent) {
         set.status = 409;
-        return { error: "this upload was already sent to Platform; sending it again creates new calls", batch_ids: sent.conflict };
+        return { error: "this upload was already sent to the platform; sending it again creates new calls", batch_ids: sent.conflict };
       }
       kickPushWorker();
       return { batch: getBatch(PUSH_MAX_ATTEMPTS, sent.batchId) };
@@ -380,7 +380,7 @@ const api = new Elysia({ prefix: "/api" })
 
   .get("/settings", () => ({
     crm: getCrmConfig(),
-    wr: getWrConfig(),
+    platform: getPlatformConfig(),
     inboundKey: getInboundKey(),
     coreKey: getCoreKey(),
     defaults: DEFAULT_CRM_CONFIG,
@@ -572,10 +572,10 @@ const api = new Elysia({ prefix: "/api" })
   )
 
   .put(
-    "/settings/wr",
+    "/settings/platform",
     ({ body, set }) => {
       try {
-        return { wr: saveWrConfig(body) };
+        return { platform: savePlatformConfig(body) };
       } catch (e) {
         set.status = 422;
         return { error: String((e as Error).message) };
@@ -668,7 +668,7 @@ const api = new Elysia({ prefix: "/api" })
     const pending = resetPushSchedule(id);
     if (pending.length === 0) {
       set.status = 409;
-      return { error: "every request for this number already reached Platform" };
+      return { error: "every request for this number already reached the platform" };
     }
     try {
       const results = await pushRequests(pending);
@@ -713,7 +713,7 @@ const QUEUE_EXAMPLE = {
   oldest_pending_age_seconds: null,
   rate_per_min: 100,
   attempts_last_minute: 0,
-  wr_configured: true,
+  platform_configured: true,
   blocked: null,
   worker_running: false,
   worker_last_run_at: "2026-09-24T12:00:00.000Z",
@@ -722,13 +722,13 @@ const QUEUE_EXAMPLE = {
 
 const queueSchema = t.Object(
   {
-    pending: t.Number({ description: "Calls waiting to be sent to Platform, retries included." }),
+    pending: t.Number({ description: "Calls waiting to be sent to the platform, retries included." }),
     due: t.Number({ description: "Pending calls that may be sent right now." }),
     abandoned: t.Number({ description: "Calls that gave up after twelve attempts. Retry them from the batch." }),
     oldest_pending_age_seconds: t.Nullable(t.Number()),
     rate_per_min: t.Number(),
     attempts_last_minute: t.Number(),
-    wr_configured: t.Boolean({ description: "False means nothing is sent until the Platform connection is set." }),
+    platform_configured: t.Boolean({ description: "False means nothing is sent until the platform connection is set." }),
     blocked: t.Nullable(t.String({ description: "Why sending is paused right now, if it is." })),
     worker_running: t.Boolean(),
     worker_last_run_at: t.Nullable(t.String()),
@@ -747,7 +747,7 @@ const app = new Elysia()
           title: "Hidden Numbers cabinet",
           version: buildInfo.version,
           description:
-            "Client-side tokenisation gateway between your CRM and Platform. Real phone numbers never leave this server: players come in here, only tokens go out to Platform, call results come back here and are delivered to your CRM with the real number restored.",
+            "Client-side tokenisation gateway between your CRM and the platform. Real phone numbers never leave this server: players come in here, only tokens go out to the platform, call results come back here and are delivered to your CRM with the real number restored.",
         },
         tags: [
           { name: "Players", description: "Your CRM → cabinet. Authenticate with the inbound key from Settings." },
@@ -760,7 +760,7 @@ const app = new Elysia()
               tags: ["Players"],
               summary: "Call result delivered to your CRM",
               description:
-                "Sent by the cabinet to the `webhook_url` of the request once Platform reports the outcome of the call. `phone` is the real number, `call_id` is the one you received when you sent the player, `payload` is returned exactly as you sent it. Answer 2xx; anything else is retried with a growing delay, twelve attempts in total.",
+                "Sent by the cabinet to the `webhook_url` of the request once the platform reports the outcome of the call. `phone` is the real number, `call_id` is the one you received when you sent the player, `payload` is returned exactly as you sent it. Answer 2xx; anything else is retried with a growing delay, twelve attempts in total.",
               requestBody: {
                 required: true,
                 content: {

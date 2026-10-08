@@ -1,7 +1,7 @@
 # WR Hidden Numbers — client cabinet
 
-Client-deployed service for Platform issue #641. The client's real phone base **never leaves
-this box**. Platform only ever sees **FF3-1 tokens**; the real number is recovered later, on the
+Client-deployed tokenisation service for the calling platform. The client's real phone base **never leaves
+this box**. The platform only ever sees **FF3-1 tokens**; the real number is recovered later, on the
 egress SIP leg, just before the call hits the PSTN provider.
 
 ```
@@ -35,14 +35,14 @@ The cabinet has a **login page** backed by a session cookie (`CABINET_USER` / `C
 
 ## Token design (FF3-1, format-preserving)
 
-A token is always **15 digits**, a valid E.164 string that passes Platform' `^\+[1-9]\d{1,14}$`:
+A token is always **15 digits**, a valid E.164 string that passes the platform's `^\+[1-9]\d{1,14}$`:
 
 ```
 + <routeDigit:1=9> <FF3 ciphertext:14>        FF3 plaintext(14) = <lenCode:1><body:13>
 ```
 
-- **Deterministic** (fixed key+tweak): same real number → same token → Platform dedup / DNC linkage still work.
-- **No real digits leak**: FF3-1 is a keyed bijection; the key is client-only, so Platform can never reverse it.
+- **Deterministic** (fixed key+tweak): same real number → same token → platform dedup / DNC linkage still work.
+- **No real digits leak**: FF3-1 is a keyed bijection; the key is client-only, so the platform can never reverse it.
 - **Length hidden**: every token is exactly 15 digits regardless of the real number's length.
 - **Supported real length: 8–13 significant digits** (covers all real-world E.164; longer is rejected).
 - Linkability (telling that two leads are the same person) is *intentionally* preserved — required for dedup/DNC. It does **not** reveal the number.
@@ -57,13 +57,13 @@ A token is always **15 digits**, a valid E.164 string that passes Platform' `^\+
 | GET | `/api/numbers/:id` | (UI) | read one |
 | PATCH | `/api/numbers/:id` | (UI) | replace the real number `{ "real": "+..." }` → re-tokenizes, resets push state |
 | DELETE | `/api/numbers/:id` | (UI) | delete one |
-| GET | `/api/export` | (UI) | tokens to ship to Platform (drop into `phone_e164`) |
+| GET | `/api/export` | (UI) | tokens to ship to the platform (drop into `phone_e164`) |
 | GET | `/api/decrypt?t=<token>` | `X-Decrypt-Key` | egress lookup → `{ "phone": "+..." }` (no caller yet — see Egress) |
 | GET | `/health` | — | liveness + base count |
 
 ### Upload file format
 
-CSV or XLSX (UTF-8, first worksheet). Columns follow the Platform client-integration
+CSV or XLSX (UTF-8, first worksheet). Columns follow the platform client-integration
 list format (guide §2A / §2):
 
 | Column | Required | Notes |
@@ -111,10 +111,10 @@ The React app (`public/index.html` → `index.tsx` → `App.tsx`) is imported in
 (`import index from "../public/index.html"`); Bun bundles it and `Bun.serve` routes `/` to the
 SPA, falling through to Elysia for the API. No Vite, no separate frontend package or build.
 
-## Wiring into Platform
+## Wiring into the platform
 
 1. **Cabinet** → operator uploads the real base → `/api/export` yields tokens.
-2. **Ship tokens to Platform** in `phone_e164`, **each tagged with a constant `player_segment`**
+2. **Ship tokens to the platform** in `phone_e164`, **each tagged with a constant `player_segment`**
    (e.g. `hidden_base_2026_06`). That label is what turns the flat list into a **segment**
    (`deriveSegmentHierarchy` → `ensureSegmentHierarchy` builds Segment + membership + CampaignSegment).
    Without the label the rows enroll but no segment forms → the campaign has nothing to target.
@@ -129,4 +129,4 @@ SPA, falling through to Elysia for the API. No Vite, no separate frontend packag
 - `/api/decrypt` auth is a shared header secret; add **mTLS** in production.
 - FF3-1 key management (rotation, HSM) is out of scope here — losing the key orphans every token; rotating it re-tokenizes the whole base.
 - Decryption is stateless (FF3), so the SQLite base is for the UI/audit only.
-- The `player_segment` labelling + enrollment rule (Platform side) is **configuration**, not code here.
+- The `player_segment` labelling + enrollment rule (the platform side) is **configuration**, not code here.

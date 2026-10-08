@@ -1,7 +1,5 @@
 import type { NumberRow } from "./db";
 
-// Emits rows in the Platform client-integration "core" list shape, with the TOKEN in
-// the phone_e164 column — re-importable anywhere as a tokenized segment, zero PII.
 const HEADER = ["user_id", "phone_e164", "first_name", "last_name", "country", "language", "segment", "cohort"];
 
 function esc(v: string | null): string {

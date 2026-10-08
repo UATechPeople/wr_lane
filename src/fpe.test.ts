@@ -21,7 +21,7 @@ describe("FF3 phone tokenization", () => {
     }
   });
 
-  test("token is a valid E.164 string accepted by Platform' regex", () => {
+  test("token is a valid E.164 string accepted by the platform's regex", () => {
     const wr = /^\+[1-9]\d{1,14}$/;
     for (const real of SAMPLES) {
       expect(wr.test(encryptPhone(real))).toBe(true);

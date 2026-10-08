@@ -35,7 +35,7 @@ export function Cabinet({
               <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Hidden Numbers</h1>
               <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-sm font-semibold text-neutral-700">{c.grandTotal}</span>
             </div>
-            <p className="mt-1 text-sm text-neutral-500">Real numbers stay here. Platform only ever sees tokens.</p>
+            <p className="mt-1 text-sm text-neutral-500">Real numbers stay here. The platform only ever sees tokens.</p>
             {build && (
               <p className="mt-1 font-mono text-xs text-neutral-400" title={build.builtAt ?? undefined}>
                 v{build.version}
@@ -114,7 +114,7 @@ export function Cabinet({
         busy={c.busy}
         onClose={c.closeSettings}
         onSave={c.saveCrm}
-        onSaveWr={c.saveWr}
+        onSavePlatform={c.savePlatform}
         onSavePushRate={c.savePushRate}
         onRotate={c.rotateKey}
         routeActions={c.routeActions}

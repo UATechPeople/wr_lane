@@ -16,7 +16,7 @@ export const DEFAULT_CRM_CONFIG: CrmConfig = {
   timeoutMs: 10_000,
 };
 
-export const WR_TARGET_FIELDS = [
+export const PLATFORM_TARGET_FIELDS = [
   "phone_e164",
   "country",
   "language",
@@ -26,32 +26,32 @@ export const WR_TARGET_FIELDS = [
   "cohort",
 ] as const;
 
-export const WR_SOURCE_FIELDS = ["token", "user_id", "country", "language", "first_name", "last_name", "segment", "cohort"] as const;
+export const PLATFORM_SOURCE_FIELDS = ["token", "user_id", "country", "language", "first_name", "last_name", "segment", "cohort"] as const;
 
 export const TOKEN_ONLY_TARGETS = ["phone_e164"] as const;
 
-export type WrTarget = (typeof WR_TARGET_FIELDS)[number];
-export type WrSource = (typeof WR_SOURCE_FIELDS)[number];
+export type PlatformTarget = (typeof PLATFORM_TARGET_FIELDS)[number];
+export type PlatformSource = (typeof PLATFORM_SOURCE_FIELDS)[number];
 
-export const DEFAULT_WR_FIELDS: { as: WrTarget; from: WrSource }[] = [
+export const DEFAULT_PLATFORM_FIELDS: { as: PlatformTarget; from: PlatformSource }[] = [
   { as: "phone_e164", from: "token" },
   { as: "player_segment", from: "segment" },
   { as: "cohort", from: "cohort" },
 ];
 
-const wrFieldSchema = z.object({
-  as: z.enum(WR_TARGET_FIELDS),
-  from: z.enum(WR_SOURCE_FIELDS),
+const platformFieldSchema = z.object({
+  as: z.enum(PLATFORM_TARGET_FIELDS),
+  from: z.enum(PLATFORM_SOURCE_FIELDS),
 });
 
-export const wrConfigSchema = z.object({
-  baseUrl: z.string().url("Platform url is required"),
+export const platformConfigSchema = z.object({
+  baseUrl: z.string().url("The platform url is required"),
   slug: z.string().min(1, "client slug is required").max(128),
   apiKey: z.string().min(1, "api key is required").max(512),
   playerSegment: z.string().min(1, "segment is required").max(128),
   eventType: z.string().min(1).max(64).default("player.registered"),
   cohort: z.string().max(128).optional(),
-  fields: z.array(wrFieldSchema).max(16).default(DEFAULT_WR_FIELDS),
+  fields: z.array(platformFieldSchema).max(16).default(DEFAULT_PLATFORM_FIELDS),
 }).superRefine((cfg, ctx) => {
   for (const target of TOKEN_ONLY_TARGETS) {
     const mapped = cfg.fields.find((f) => f.as === target);
@@ -63,47 +63,47 @@ export const wrConfigSchema = z.object({
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["fields"],
-        message: `${target} may only carry the token — mapping a real phone number there would send it to Platform`,
+        message: `${target} may only carry the token — mapping a real phone number there would send it to the platform`,
       });
     }
   }
 });
 
-export type WrConfig = z.infer<typeof wrConfigSchema>;
+export type PlatformConfig = z.infer<typeof platformConfigSchema>;
 
-export type StoredWrConfig = {
+export type StoredPlatformConfig = {
   baseUrl: string;
   slug: string;
   apiKey: string;
   playerSegment: string;
   eventType: string;
   cohort?: string;
-  fields: { as: WrTarget; from: WrSource }[];
+  fields: { as: PlatformTarget; from: PlatformSource }[];
 };
 
-const WR_KEY = "wr_connection";
+const PLATFORM_KEY = "wr_connection";
 
-const DEFAULT_WR: StoredWrConfig = {
+const DEFAULT_PLATFORM: StoredPlatformConfig = {
   baseUrl: "",
   slug: "",
   apiKey: "",
   playerSegment: "hidden_base",
   eventType: "player.registered",
-  fields: DEFAULT_WR_FIELDS,
+  fields: DEFAULT_PLATFORM_FIELDS,
 };
 
-const LEGACY_WR_TARGETS = new Set(["external_id"]);
+const LEGACY_PLATFORM_TARGETS = new Set(["external_id"]);
 
-function dropLegacyFields(cfg: StoredWrConfig): StoredWrConfig {
-  return { ...cfg, fields: cfg.fields.filter((f) => !LEGACY_WR_TARGETS.has(f.as)) };
+function dropLegacyFields(cfg: StoredPlatformConfig): StoredPlatformConfig {
+  return { ...cfg, fields: cfg.fields.filter((f) => !LEGACY_PLATFORM_TARGETS.has(f.as)) };
 }
 
-export function getWrConfig(): StoredWrConfig {
-  const raw = getSetting(WR_KEY);
-  if (raw) return dropLegacyFields({ ...DEFAULT_WR, ...(JSON.parse(raw) as Partial<StoredWrConfig>) });
+export function getPlatformConfig(): StoredPlatformConfig {
+  const raw = getSetting(PLATFORM_KEY);
+  if (raw) return dropLegacyFields({ ...DEFAULT_PLATFORM, ...(JSON.parse(raw) as Partial<StoredPlatformConfig>) });
 
-  const seeded: StoredWrConfig = {
-    ...DEFAULT_WR,
+  const seeded: StoredPlatformConfig = {
+    ...DEFAULT_PLATFORM,
     baseUrl: config.platform.baseUrl ?? "",
     slug: config.platform.slug ?? "",
     apiKey: config.platform.apiKey ?? "",
@@ -113,14 +113,14 @@ export function getWrConfig(): StoredWrConfig {
   };
 
   if (seeded.baseUrl || seeded.slug || seeded.apiKey) {
-    setSetting(WR_KEY, JSON.stringify(seeded));
+    setSetting(PLATFORM_KEY, JSON.stringify(seeded));
   }
   return seeded;
 }
 
-export function saveWrConfig(input: unknown): WrConfig {
-  const parsed = wrConfigSchema.parse(input);
-  setSetting(WR_KEY, JSON.stringify(parsed));
+export function savePlatformConfig(input: unknown): PlatformConfig {
+  const parsed = platformConfigSchema.parse(input);
+  setSetting(PLATFORM_KEY, JSON.stringify(parsed));
   return parsed;
 }
 

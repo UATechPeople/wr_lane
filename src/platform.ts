@@ -17,7 +17,7 @@ import {
 } from "./db";
 import { backoffSeconds } from "./outbox";
 import { looksLikeToken } from "./fpe";
-import { getWrConfig, TOKEN_ONLY_TARGETS, type StoredWrConfig } from "./webhook";
+import { getPlatformConfig, TOKEN_ONLY_TARGETS, type StoredPlatformConfig } from "./webhook";
 import { pushBlockedReason } from "./core";
 
 export const PUSH_MAX_ATTEMPTS = 12;
@@ -32,7 +32,7 @@ function keyRejectedReason(): string | null {
     keyRejectedAt = null;
     return null;
   }
-  return "Platform rejected the cabinet key; sending is paused for five minutes without using up attempts";
+  return "The platform rejected the cabinet key; sending is paused for five minutes without using up attempts";
 }
 
 export type PushResult = {
@@ -46,30 +46,30 @@ export type PushResult = {
 
 const PLAYER_TARGETS = new Set(["phone_e164", "country", "language", "first_name", "last_name"]);
 
-function sourceValue(r: NumberRow, req: RequestRow, from: string, wr: StoredWrConfig): string | null {
+function sourceValue(r: NumberRow, req: RequestRow, from: string, platform: StoredPlatformConfig): string | null {
   if (from === "token") return r.token;
   if (from === "user_id") return r.user_id;
   if (from === "country") return r.country && r.country.length === 2 ? r.country : null;
   if (from === "language") return r.language && r.language.length >= 2 && r.language.length <= 8 ? r.language : null;
   if (from === "first_name") return r.first_name ? r.first_name.slice(0, 128) : null;
   if (from === "last_name") return r.last_name ? r.last_name.slice(0, 128) : null;
-  if (from === "segment") return req.segment ?? r.segment ?? wr.playerSegment;
-  if (from === "cohort") return req.cohort ?? r.cohort ?? wr.cohort ?? null;
+  if (from === "segment") return req.segment ?? r.segment ?? platform.playerSegment;
+  if (from === "cohort") return req.cohort ?? r.cohort ?? platform.cohort ?? null;
   return null;
 }
 
-export function buildEvent(r: NumberRow, req: RequestRow, wr: StoredWrConfig) {
+export function buildEvent(r: NumberRow, req: RequestRow, platform: StoredPlatformConfig) {
   if (!looksLikeToken(r.token) || r.token === r.real) {
-    throw new Error(`refusing to send a real phone number to Platform (row ${r.id})`);
+    throw new Error(`refusing to send a real phone number to the platform (row ${r.id})`);
   }
 
   const player: Record<string, string> = { external_id: req.call_id };
   const data: Record<string, string> = {};
   const realTail = r.real.replace(/\D/g, "").slice(-8);
 
-  for (const field of wr.fields) {
+  for (const field of platform.fields) {
     if ((field.as as string) === "external_id") continue;
-    const value = sourceValue(r, req, field.from, wr);
+    const value = sourceValue(r, req, field.from, platform);
     if (value == null || value === "") continue;
     if ((TOKEN_ONLY_TARGETS as readonly string[]).includes(field.as)) {
       if (value !== r.token) throw new Error(`refusing to send a non-token value in ${field.as} (row ${r.id})`);
@@ -83,7 +83,7 @@ export function buildEvent(r: NumberRow, req: RequestRow, wr: StoredWrConfig) {
   if (!player.phone_e164) throw new Error(`phone_e164 is not mapped (row ${r.id})`);
 
   return {
-    type: wr.eventType,
+    type: platform.eventType,
     event_id: `hn-${req.call_id}`,
     occurred_at: new Date().toISOString(),
     player,
@@ -91,16 +91,16 @@ export function buildEvent(r: NumberRow, req: RequestRow, wr: StoredWrConfig) {
   };
 }
 
-function requireWr() {
-  const wr = getWrConfig();
-  if (!wr.baseUrl || !wr.slug || !wr.apiKey) {
-    throw new Error("set the Platform url, client slug and api key in the cabinet settings");
+function requirePlatform() {
+  const platform = getPlatformConfig();
+  if (!platform.baseUrl || !platform.slug || !platform.apiKey) {
+    throw new Error("set the platform url, client slug and api key in the cabinet settings");
   }
-  return { ...wr, url: `${wr.baseUrl.replace(/\/$/, "")}/webhook/clients/${wr.slug}/events` };
+  return { ...platform, url: `${platform.baseUrl.replace(/\/$/, "")}/webhook/clients/${platform.slug}/events` };
 }
 
 export async function pushRequest(req: RequestRow): Promise<PushResult> {
-  const wr = requireWr();
+  const platform = requirePlatform();
   const record = getNumber(req.number_id);
   if (!record) {
     const error = `number ${req.number_id} is gone`;
@@ -109,7 +109,7 @@ export async function pushRequest(req: RequestRow): Promise<PushResult> {
   }
   let event: ReturnType<typeof buildEvent>;
   try {
-    event = buildEvent(record, req, wr);
+    event = buildEvent(record, req, platform);
   } catch (e) {
     console.error(`[hidden-numbers] ${(e as Error).message}`);
     markRequestPushAbandoned(req.call_id, (e as Error).message, PUSH_MAX_ATTEMPTS);
@@ -117,10 +117,10 @@ export async function pushRequest(req: RequestRow): Promise<PushResult> {
   }
   markRequestTried(req.call_id);
   try {
-    const response = await axios.post(wr.url, event, {
+    const response = await axios.post(platform.url, event, {
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${wr.apiKey}`,
+        authorization: `Bearer ${platform.apiKey}`,
         "x-client-event-id": event.event_id,
       },
       timeout: 15_000,
@@ -133,9 +133,9 @@ export async function pushRequest(req: RequestRow): Promise<PushResult> {
       keyRejectedAt = null;
     } else if (response.status === 401 || response.status === 403) {
       keyRejectedAt = Date.now();
-      markRequestPushDeferred(req.call_id, `platform rejected the key (${response.status})`, KEY_REJECTED_PAUSE_S);
+      markRequestPushDeferred(req.call_id, `The platform rejected the key (${response.status})`, KEY_REJECTED_PAUSE_S);
     } else {
-      markRequestPushFailed(req.call_id, `platform responded ${response.status}`, backoffSeconds(req.push_attempts + 1));
+      markRequestPushFailed(req.call_id, `The platform responded ${response.status}`, backoffSeconds(req.push_attempts + 1));
     }
     return {
       token: record.token,
@@ -153,7 +153,7 @@ export async function pushRequest(req: RequestRow): Promise<PushResult> {
 }
 
 export async function pushRequests(requests: RequestRow[], concurrency = 4): Promise<PushResult[]> {
-  requireWr();
+  requirePlatform();
   const results: PushResult[] = new Array(requests.length);
   let cursor = 0;
 
@@ -205,15 +205,15 @@ export function pickDueRequests(budget: number): RequestRow[] {
   return [...live, ...bulk];
 }
 
-function wrConfigured(): boolean {
-  const wr = getWrConfig();
-  return Boolean(wr.baseUrl && wr.slug && wr.apiKey);
+function platformConfigured(): boolean {
+  const platform = getPlatformConfig();
+  return Boolean(platform.baseUrl && platform.slug && platform.apiKey);
 }
 
 export type DrainResult = { sent: number; failed: number; budget: number; skipped?: string };
 
 export async function drainPushQueue(): Promise<DrainResult> {
-  if (!wrConfigured()) return { sent: 0, failed: 0, budget: 0, skipped: "Platform connection is not configured" };
+  if (!platformConfigured()) return { sent: 0, failed: 0, budget: 0, skipped: "The platform connection is not configured" };
   const blocked = pushBlockedReason() ?? keyRejectedReason();
   if (blocked) return { sent: 0, failed: 0, budget: 0, skipped: blocked };
   const budget = tickBudget(getPushRate(), pushAttemptsInLastMinute());
@@ -269,7 +269,7 @@ export function pushQueueHealth() {
     oldest_pending_age_seconds: oldestAgeSeconds,
     rate_per_min: getPushRate(),
     attempts_last_minute: pushAttemptsInLastMinute(),
-    wr_configured: wrConfigured(),
+    platform_configured: platformConfigured(),
     blocked: pushBlockedReason() ?? keyRejectedReason(),
     worker_running: worker.running,
     worker_last_run_at: worker.lastRunAt,
@@ -303,20 +303,20 @@ export type LeadTranscript = { available: boolean; calls: LeadCall[]; error?: st
 const asText = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
 
 export async function fetchLeadTranscript(leadId: string): Promise<LeadTranscript> {
-  const wr = getWrConfig();
-  if (!wr.baseUrl || !wr.slug || !wr.apiKey) {
-    return { available: false, calls: [], error: "Platform connection is not configured" };
+  const platform = getPlatformConfig();
+  if (!platform.baseUrl || !platform.slug || !platform.apiKey) {
+    return { available: false, calls: [], error: "The platform connection is not configured" };
   }
-  const url = `${wr.baseUrl.replace(/\/$/, "")}/v1/clients/${wr.slug}/leads/${encodeURIComponent(leadId)}`;
+  const url = `${platform.baseUrl.replace(/\/$/, "")}/v1/clients/${platform.slug}/leads/${encodeURIComponent(leadId)}`;
   try {
     const response = await axios.get(url, {
-      headers: { authorization: `Bearer ${wr.apiKey}` },
+      headers: { authorization: `Bearer ${platform.apiKey}` },
       timeout: 15_000,
       validateStatus: () => true,
     });
-    if (response.status === 404) return { available: false, calls: [], error: "lead not found in Platform" };
+    if (response.status === 404) return { available: false, calls: [], error: "lead not found in the platform" };
     if (response.status < 200 || response.status >= 300) {
-      return { available: false, calls: [], error: `Platform responded ${response.status}` };
+      return { available: false, calls: [], error: `The platform responded ${response.status}` };
     }
     const raw = (response.data as { calls?: unknown[] } | null)?.calls ?? [];
     const calls: LeadCall[] = raw.map((c) => {

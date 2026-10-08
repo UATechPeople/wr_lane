@@ -1,6 +1,5 @@
 import { cn } from "../lib/cn";
 
-// Mirrors ui StatusBadge: pill + colored dot, semantic palette.
 export type Tone = "neutral" | "success" | "info" | "warning" | "danger";
 
 const tones: Record<Tone, { bg: string; text: string; dot: string }> = {

@@ -7,8 +7,8 @@ type Field = { name: string; type: string; required?: boolean; note: string };
 
 const INBOUND_FIELDS: Field[] = [
   { name: "phone", type: "string", required: true, note: "The real number in E.164, e.g. +31612345678. Never send a token here." },
-  { name: "segment", type: "string", note: "Together with cohort selects the Platform campaign." },
-  { name: "cohort", type: "string", note: "Together with segment selects the Platform campaign, e.g. c1." },
+  { name: "segment", type: "string", note: "Together with cohort selects the platform campaign." },
+  { name: "cohort", type: "string", note: "Together with segment selects the platform campaign, e.g. c1." },
   { name: "webhook_url", type: "string", note: "Where the result of this call must be posted." },
   { name: "payload", type: "object", note: "Anything you want back with the result — returned untouched. Put user_id here." },
 ];
@@ -107,8 +107,8 @@ export function DocsDialog({ open, settings, onClose }: { open: boolean; setting
         <Section title="1. How it fits together">
           <p className="text-sm text-neutral-600">
             Your CRM sends a real phone number to this cabinet. The cabinet encrypts it into a 15-digit token and forwards only the
-            token to Platform. Platform dials the token; the real number is restored inside your own SIP proxy at the moment of the
-            call. When the call is over Platform posts the outcome back here, the cabinet decrypts the token, attaches the{" "}
+            token to the platform. The platform dials the token; the real number is restored inside your own SIP proxy at the moment of the
+            call. When the call is over the platform posts the outcome back here, the cabinet decrypts the token, attaches the{" "}
             <code className="rounded bg-neutral-100 px-1 font-mono text-xs">payload</code> you sent and posts the result to the{" "}
             <code className="rounded bg-neutral-100 px-1 font-mono text-xs">webhook_url</code> of that request.
           </p>
@@ -245,7 +245,7 @@ Content-Type: application/json
           />
         </Section>
 
-        <Section title="8. For the Platform side">
+        <Section title="8. For the platform side">
           <p className="text-sm text-neutral-600">Point the campaign webhook at this cabinet with the second key:</p>
           <Code>{`url:  ${origin}/hook/call-result
 auth: Bearer ${core}`}</Code>

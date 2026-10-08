@@ -41,7 +41,7 @@ export function AddDialog({
       onClose={onClose}
       size="lg"
       title="Add numbers"
-      description="Numbers are encrypted into tokens here — only the tokens are sent to Platform."
+      description="Numbers are encrypted into tokens here — only the tokens are sent to the platform."
     >
       {preview ? (
         <ColumnMapper preview={preview} map={map} busy={busy} onRemap={onRemap} onImport={onImport} onCancel={onCancelFile} />
